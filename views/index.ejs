@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Webhook Generator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <nav class="bg-white shadow p-4 flex justify-between items-center">
+        <h1 class="text-xl font-bold">🔗 Webhook Generator</h1>
+        <% if (user) { %>
+            <div class="flex items-center gap-4">
+                <span>Welcome, <%= user.username %>!</span>
+                <a href="/logout" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">Logout</a>
+            </div>
+        <% } else { %>
+            <a href="/auth/discord" class="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 flex items-center gap-2">
+                <img src="https://cdn.jsdelivr.net/npm/simple-icons@v5/icons/discord.svg" class="w-5 h-5 filter invert" alt="">
+                Sign in with Discord
+            </a>
+        <% } %>
+    </nav>
+
+    <main class="max-w-4xl mx-auto p-6">
+        <% if (user) { %>
+            <div class="bg-white rounded-lg shadow p-6 mb-6">
+                <h2 class="text-2xl font-semibold mb-4">Generate a new webhook URL</h2>
+                <button id="generateBtn" class="bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition">
+                    + Generate New
+                </button>
+                <div id="newUrlContainer" class="mt-4 hidden">
+                    <p class="text-lg font-medium">Your new webhook URL:</p>
+                    <div class="flex items-center gap-2 mt-2">
+                        <input id="webhookUrlInput" type="text" readonly class="flex-1 bg-gray-100 p-3 rounded border" />
+                        <button id="copyBtn" class="bg-blue-600 text-white px-4 py-3 rounded hover:bg-blue-700">
+                            Copy
+                        </button>
+                    </div>
+                    <p class="mt-2 text-gray-600">
+                        Use this URL in your scripts. <br>
+                        <a id="viewLink" href="#" target="_blank" class="text-blue-600 underline">View received data</a>
+                    </p>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow p-6">
+                <h2 class="text-2xl font-semibold mb-4">Your Webhook Keys</h2>
+                <% if (keys.length === 0) { %>
+                    <p class="text-gray-500">No webhook keys generated yet.</p>
+                <% } else { %>
+                    <ul class="divide-y">
+                        <% keys.forEach(key => { %>
+                            <li class="py-4">
+                                <div class="flex items-center justify-between">
+                                    <div class="flex-1">
+                                        <code class="text-sm bg-gray-100 p-2 rounded block break-all"><%= key.key %></code>
+                                        <span class="text-xs text-gray-500">Created: <%= key.created_at %></span>
+                                    </div>
+                                    <div class="flex gap-2 ml-4">
+                                        <button class="copyKeyBtn text-blue-600 hover:text-blue-800" data-key="<%= key.key %>">Copy URL</button>
+                                        <a href="/view/<%= key.key %>" class="text-green-600 hover:text-green-800">View Data</a>
+                                    </div>
+                                </div>
+                            </li>
+                        <% }) %>
+                    </ul>
+                <% } %>
+            </div>
+        <% } else { %>
+            <div class="bg-white rounded-lg shadow p-12 text-center">
+                <h2 class="text-3xl font-bold mb-4">Welcome to Webhook Generator</h2>
+                <p class="text-gray-600 mb-8">Sign in with Discord to create your private webhook endpoints.</p>
+                <a href="/auth/discord" class="bg-indigo-600 text-white px-8 py-4 rounded-lg text-xl hover:bg-indigo-700 inline-flex items-center gap-3">
+                    <img src="https://cdn.jsdelivr.net/npm/simple-icons@v5/icons/discord.svg" class="w-6 h-6 filter invert" alt="">
+                    Sign in with Discord
+                </a>
+            </div>
+        <% } %>
+    </main>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const generateBtn = document.getElementById('generateBtn');
+            const newUrlContainer = document.getElementById('newUrlContainer');
+            const webhookUrlInput = document.getElementById('webhookUrlInput');
+            const viewLink = document.getElementById('viewLink');
+            const copyBtn = document.getElementById('copyBtn');
+
+            if (generateBtn) {
+                generateBtn.addEventListener('click', async () => {
+                    const res = await fetch('/generate', { method: 'POST' });
+                    const data = await res.json();
+                    const base = window.location.origin;
+                    const fullUrl = base + data.webhookUrl;
+                    webhookUrlInput.value = fullUrl;
+                    viewLink.href = base + data.viewUrl;
+                    newUrlContainer.classList.remove('hidden');
+                });
+            }
+
+            // Copy button functionality
+            if (copyBtn) {
+                copyBtn.addEventListener('click', () => {
+                    webhookUrlInput.select();
+                    navigator.clipboard.writeText(webhookUrlInput.value).then(() => {
+                        alert('Copied to clipboard!');
+                    });
+                });
+            }
+
+            // Copy buttons for existing keys
+            document.querySelectorAll('.copyKeyBtn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const key = btn.dataset.key;
+                    const url = window.location.origin + '/webhook/' + key;
+                    navigator.clipboard.writeText(url).then(() => {
+                        alert('Copied webhook URL!');
+                    });
+                });
+            });
+        });
+    </script>
+</body>
+</html>
