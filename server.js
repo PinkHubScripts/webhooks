@@ -1,65 +1,143 @@
+require('dotenv').config();
 const express = require('express');
+const session = require('express-session');
+const passport = require('passport');
+const DiscordStrategy = require('passport-discord').Strategy;
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
-const path = require('path');
+const db = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// In-memory storage: { key: [ { method, headers, body, date }, ... ] }
-const webhookData = {};
+// Session middleware
+app.use(session({
+  secret: process.env.SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: { secure: false } // set to true if using HTTPS (production)
+}));
 
-app.use(bodyParser.raw({ type: '*/*' })); // capture raw body for any content type
-app.use(express.static('public'));        // serve static frontend
+// Passport setup
+app.use(passport.initialize());
+app.use(passport.session());
 
-// Generate a new webhook key
-app.post('/generate', (req, res) => {
+passport.serializeUser((user, done) => done(null, user.id));
+passport.deserializeUser((id, done) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  done(null, user);
+});
+
+passport.use(new DiscordStrategy({
+  clientID: process.env.DISCORD_CLIENT_ID,
+  clientSecret: process.env.DISCORD_CLIENT_SECRET,
+  callbackURL: '/auth/discord/callback',
+  scope: ['identify']
+}, (accessToken, refreshToken, profile, done) => {
+  // Insert or update user in database
+  const stmt = db.prepare(`
+    INSERT OR REPLACE INTO users (id, username, avatar)
+    VALUES (?, ?, ?)
+  `);
+  stmt.run(profile.id, profile.username, profile.avatar);
+  return done(null, profile);
+}));
+
+app.use(bodyParser.raw({ type: '*/*' })); // capture raw body for webhooks
+app.set('view engine', 'ejs');
+
+// Middleware to check if user is authenticated
+function ensureAuthenticated(req, res, next) {
+  if (req.isAuthenticated()) return next();
+  res.redirect('/');
+}
+
+// ---------- Routes ----------
+
+// Home page – shows login button or dashboard
+app.get('/', (req, res) => {
+  if (req.isAuthenticated()) {
+    // Fetch user's webhook keys
+    const keys = db.prepare('SELECT * FROM webhook_keys WHERE user_id = ? ORDER BY created_at DESC').all(req.user.id);
+    res.render('index', { user: req.user, keys });
+  } else {
+    res.render('index', { user: null, keys: [] });
+  }
+});
+
+// Discord auth
+app.get('/auth/discord', passport.authenticate('discord'));
+app.get('/auth/discord/callback',
+  passport.authenticate('discord', { failureRedirect: '/' }),
+  (req, res) => res.redirect('/')
+);
+
+// Logout
+app.get('/logout', (req, res) => {
+  req.logout(() => res.redirect('/'));
+});
+
+// Generate a new webhook key (protected)
+app.post('/generate', ensureAuthenticated, (req, res) => {
   const key = crypto.randomBytes(16).toString('hex');
-  webhookData[key] = [];
+  const stmt = db.prepare('INSERT INTO webhook_keys (key, user_id) VALUES (?, ?)');
+  stmt.run(key, req.user.id);
   res.json({ key, webhookUrl: `/webhook/${key}`, viewUrl: `/view/${key}` });
 });
 
-// Receive webhook POST requests
+// Public webhook endpoint – anyone can POST to a valid key
 app.all('/webhook/:key', (req, res) => {
   const { key } = req.params;
-  if (!webhookData[key]) {
+  // Check if key exists
+  const keyExists = db.prepare('SELECT key FROM webhook_keys WHERE key = ?').get(key);
+  if (!keyExists) {
     return res.status(404).send('Webhook key not found');
   }
 
-  const entry = {
-    method: req.method,
-    headers: req.headers,
-    body: req.body.toString('utf8'), // raw body as string
-    timestamp: new Date().toISOString()
-  };
-  webhookData[key].push(entry);
+  // Store the request
+  const stmt = db.prepare(`
+    INSERT INTO webhook_requests (key, method, headers, body)
+    VALUES (?, ?, ?, ?)
+  `);
+  stmt.run(
+    key,
+    req.method,
+    JSON.stringify(req.headers),
+    req.body.toString('utf8')
+  );
 
-  console.log(`Received webhook for ${key}:`, entry);
   res.status(200).send('Webhook received');
 });
 
-// View received webhooks for a key (HTML page)
-app.get('/view/:key', (req, res) => {
+// View data for a specific key (protected + ownership check)
+app.get('/view/:key', ensureAuthenticated, (req, res) => {
   const { key } = req.params;
-  const data = webhookData[key] || [];
-  res.send(`
-    <html>
-      <head><title>Webhook Data for ${key}</title></head>
-      <body>
-        <h1>Webhook Data for ${key}</h1>
-        <p><a href="/">← Generate another</a></p>
-        <pre>${JSON.stringify(data, null, 2)}</pre>
-      </body>
-    </html>
-  `);
+  // Verify the key belongs to the user
+  const keyOwner = db.prepare('SELECT user_id FROM webhook_keys WHERE key = ?').get(key);
+  if (!keyOwner || keyOwner.user_id !== req.user.id) {
+    return res.status(403).send('Forbidden');
+  }
+
+  // Fetch requests for this key
+  const requests = db.prepare(`
+    SELECT method, headers, body, timestamp
+    FROM webhook_requests
+    WHERE key = ?
+    ORDER BY timestamp DESC
+  `).all(key);
+
+  res.render('view-key', { key, requests });
 });
 
-// Optional: raw JSON endpoint for programmatic access
-app.get('/api/webhook/:key', (req, res) => {
+// Optional: JSON API for the key's data (protected)
+app.get('/api/webhook/:key', ensureAuthenticated, (req, res) => {
   const { key } = req.params;
-  res.json(webhookData[key] || []);
+  const keyOwner = db.prepare('SELECT user_id FROM webhook_keys WHERE key = ?').get(key);
+  if (!keyOwner || keyOwner.user_id !== req.user.id) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  const requests = db.prepare('SELECT * FROM webhook_requests WHERE key = ? ORDER BY timestamp DESC').all(key);
+  res.json(requests);
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
