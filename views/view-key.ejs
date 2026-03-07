@@ -51,6 +51,23 @@
                     }
                     // Extract content-type (case-insensitive)
                     let contentType = headersObj['content-type'] || headersObj['Content-Type'] || 'unknown';
+
+                    // Process body for display
+                    let bodyDisplay = req.body;
+                    if (bodyDisplay === null || bodyDisplay === undefined) {
+                        bodyDisplay = '(empty)';
+                    } else if (typeof bodyDisplay === 'object') {
+                        // If it's already an object (shouldn't happen), stringify it
+                        bodyDisplay = JSON.stringify(bodyDisplay, null, 2);
+                    } else {
+                        // It's a string – try to parse as JSON for pretty printing
+                        try {
+                            const parsed = JSON.parse(bodyDisplay);
+                            bodyDisplay = JSON.stringify(parsed, null, 2);
+                        } catch (e) {
+                            // Not JSON, leave as is (plain text)
+                        }
+                    }
                 %>
                     <div class="request-item bg-white rounded-lg shadow p-4" data-index="<%= index %>">
                         <div class="flex justify-between text-sm text-gray-500 mb-2">
@@ -64,18 +81,7 @@
                         <div class="mt-2">
                             <p class="font-medium">Body</p>
                             <p class="text-xs text-gray-500 mb-1">Content-Type: <%= contentType %></p>
-                            <pre class="body bg-gray-100 p-2 rounded text-xs overflow-auto"><% 
-                                let bodyDisplay = req.body || '(empty)';
-                                // Try to parse body as JSON for pretty printing
-                                try {
-                                    if (bodyDisplay && bodyDisplay !== '(empty)') {
-                                        const parsed = JSON.parse(bodyDisplay);
-                                        bodyDisplay = JSON.stringify(parsed, null, 2);
-                                    }
-                                } catch (e) {
-                                    // Not JSON, leave as is
-                                }
-                                %><%= bodyDisplay %></pre>
+                            <pre class="body bg-gray-100 p-2 rounded text-xs overflow-auto"><%= bodyDisplay %></pre>
                         </div>
                     </div>
                 <% }) %>
