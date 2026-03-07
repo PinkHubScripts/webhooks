@@ -14,7 +14,8 @@
     "ejs": "^5.0.1",
     "express-session": "^1.19.0",
     "passport": "^0.7.0",
-    "passport-discord": "^0.1.4"
+    "passport-discord": "^0.1.4",
+    "node-fetch": "^2.7.0"
   },
   "keywords": [],
   "author": "",
