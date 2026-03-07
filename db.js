@@ -6,6 +6,8 @@ db.exec(`
     id TEXT PRIMARY KEY,
     username TEXT,
     avatar TEXT,
+    chosen_username TEXT,
+    provider TEXT DEFAULT 'discord',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
