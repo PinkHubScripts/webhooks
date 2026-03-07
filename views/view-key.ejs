@@ -60,7 +60,18 @@
                         </details>
                         <div class="mt-2">
                             <p class="font-medium">Body:</p>
-                            <pre class="body bg-gray-100 p-2 rounded text-xs overflow-auto"><%= req.body || '(empty)' %></pre>
+                            <pre class="body bg-gray-100 p-2 rounded text-xs overflow-auto"><% 
+                                let bodyDisplay = req.body || '(empty)';
+                                // Try to parse body as JSON for pretty printing
+                                try {
+                                    if (bodyDisplay && bodyDisplay !== '(empty)') {
+                                        const parsed = JSON.parse(bodyDisplay);
+                                        bodyDisplay = JSON.stringify(parsed, null, 2);
+                                    }
+                                } catch (e) {
+                                    // Not JSON, leave as is
+                                }
+                                %><%= bodyDisplay %></pre>
                         </div>
                     </div>
                 <% }) %>
@@ -75,9 +86,8 @@
                 const utcDate = el.getAttribute('data-utc');
                 if (utcDate) {
                     const date = new Date(utcDate);
-                    // Check if valid date
                     if (!isNaN(date)) {
-                        el.textContent = date.toLocaleString(); // local time with user's locale
+                        el.textContent = date.toLocaleString();
                     }
                 }
             });
@@ -92,7 +102,7 @@
             const requestData = [];
             requestItems.forEach(item => {
                 const method = item.querySelector('.method').textContent;
-                const timestamp = item.querySelector('.timestamp-local').textContent; // now local
+                const timestamp = item.querySelector('.timestamp-local').textContent;
                 const headers = item.querySelector('.headers').textContent;
                 const body = item.querySelector('.body').textContent;
                 requestData.push({
