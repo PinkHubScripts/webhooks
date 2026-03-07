@@ -39,7 +39,19 @@
             <p class="bg-yellow-100 p-4 rounded">No requests received yet. Send a POST request to <code>/webhook/<%= key %></code>.</p>
         <% } else { %>
             <div id="requestsContainer" class="space-y-4">
-                <% requests.forEach((req, index) => { %>
+                <% requests.forEach((req, index) => { 
+                    // Parse headers once for reuse
+                    let headersObj = {};
+                    try {
+                        if (req.headers) {
+                            headersObj = JSON.parse(req.headers);
+                        }
+                    } catch (e) {
+                        headersObj = { error: 'Invalid JSON', raw: req.headers };
+                    }
+                    // Extract content-type (case-insensitive)
+                    let contentType = headersObj['content-type'] || headersObj['Content-Type'] || 'unknown';
+                %>
                     <div class="request-item bg-white rounded-lg shadow p-4" data-index="<%= index %>">
                         <div class="flex justify-between text-sm text-gray-500 mb-2">
                             <span class="method"><%= req.method %></span>
@@ -47,19 +59,11 @@
                         </div>
                         <details>
                             <summary class="cursor-pointer text-blue-600">Headers</summary>
-                            <pre class="headers bg-gray-100 p-2 mt-2 rounded text-xs overflow-auto"><% 
-                                let headersObj = {};
-                                try {
-                                    if (req.headers) {
-                                        headersObj = JSON.parse(req.headers);
-                                    }
-                                } catch (e) {
-                                    headersObj = { error: 'Invalid JSON', raw: req.headers };
-                                }
-                                %><%= JSON.stringify(headersObj, null, 2) %></pre>
+                            <pre class="headers bg-gray-100 p-2 mt-2 rounded text-xs overflow-auto"><%= JSON.stringify(headersObj, null, 2) %></pre>
                         </details>
                         <div class="mt-2">
-                            <p class="font-medium">Body:</p>
+                            <p class="font-medium">Body</p>
+                            <p class="text-xs text-gray-500 mb-1">Content-Type: <%= contentType %></p>
                             <pre class="body bg-gray-100 p-2 rounded text-xs overflow-auto"><% 
                                 let bodyDisplay = req.body || '(empty)';
                                 // Try to parse body as JSON for pretty printing
