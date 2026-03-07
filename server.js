@@ -72,6 +72,9 @@ console.log('🔍 GOOGLE_CLIENT_SECRET (first 4 chars):',
 console.log('🔍 GITHUB_CLIENT_ID:', process.env.GITHUB_CLIENT_ID ? '✅ set' : '❌ MISSING');
 console.log('🔍 GITHUB_CLIENT_SECRET (first 4 chars):', 
     process.env.GITHUB_CLIENT_SECRET ? process.env.GITHUB_CLIENT_SECRET.substring(0,4) : '❌ MISSING');
+console.log('🔍 DISCORD_CLIENT_ID:', process.env.DISCORD_CLIENT_ID ? '✅ set' : '❌ MISSING');
+console.log('🔍 DISCORD_CLIENT_SECRET (first 4 chars):', 
+    process.env.DISCORD_CLIENT_SECRET ? process.env.DISCORD_CLIENT_SECRET.substring(0,4) : '❌ MISSING');
 console.log('🔍 SESSION_SECRET (first 4 chars):', 
     process.env.SESSION_SECRET ? process.env.SESSION_SECRET.substring(0,4) : '❌ MISSING');
 console.log('🔍 DATABASE_URL:', process.env.DATABASE_URL ? '✅ set' : '❌ MISSING');
@@ -125,7 +128,7 @@ passport.deserializeUser(async (id, done) => {
 });
 
 // ----------------------------------------------------------------------
-// Google Strategy (still prompts for username)
+// Google Strategy
 // ----------------------------------------------------------------------
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
@@ -143,14 +146,12 @@ passport.use(new GoogleStrategy({
       let user = result.rows[0];
       
       if (!user) {
-        // New Google user – do NOT set chosen_username automatically
         const insert = await pool.query(
           'INSERT INTO users (id, username, avatar, email, provider) VALUES ($1, $2, $3, $4, $5) RETURNING *',
           [profile.id, profile.displayName, profile.photos[0]?.value, email, 'google']
         );
         user = insert.rows[0];
       } else {
-        // Update avatar and email for existing user
         await pool.query(
           'UPDATE users SET avatar = $1, email = $2 WHERE id = $3',
           [profile.photos[0]?.value, email, profile.id]
@@ -169,7 +170,7 @@ passport.use(new GoogleStrategy({
 ));
 
 // ----------------------------------------------------------------------
-// GitHub Strategy – automatically sets chosen_username
+// GitHub Strategy
 // ----------------------------------------------------------------------
 passport.use(new GitHubStrategy({
     clientID: process.env.GITHUB_CLIENT_ID,
@@ -193,14 +194,12 @@ passport.use(new GitHubStrategy({
       let user = result.rows[0];
 
       if (!user) {
-        // New GitHub user – automatically set chosen_username to their GitHub username
         const insert = await pool.query(
           'INSERT INTO users (id, username, avatar, email, provider, chosen_username) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
           [profile.id, username, avatar, email, 'github', username]
         );
         user = insert.rows[0];
       } else {
-        // Update avatar and email for existing user
         await pool.query(
           'UPDATE users SET avatar = $1, email = $2 WHERE id = $3',
           [avatar, email, profile.id]
@@ -217,6 +216,109 @@ passport.use(new GitHubStrategy({
     }
   }
 ));
+
+// ----------------------------------------------------------------------
+// Discord Manual OAuth (no Passport)
+// ----------------------------------------------------------------------
+const DISCORD_CALLBACK_URL = 'https://webhooks-gwsp.onrender.com/auth/discord/callback';
+const DISCORD_SCOPES = ['identify', 'email', 'guilds'];
+
+app.get('/auth/discord', (req, res) => {
+    const discordAuthUrl = `https://discord.com/oauth2/authorize?client_id=${process.env.DISCORD_CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(DISCORD_CALLBACK_URL)}&scope=${encodeURIComponent(DISCORD_SCOPES.join(' '))}`;
+    console.log('Redirecting to Discord:', discordAuthUrl);
+    res.redirect(discordAuthUrl);
+});
+
+app.get('/auth/discord/callback', async (req, res) => {
+    console.log('📞 Discord callback reached');
+    console.log('Query:', req.query);
+    const { code, error } = req.query;
+    if (error) {
+        console.error('Discord error:', error);
+        return res.status(400).send('Discord error: ' + error);
+    }
+    if (!code) {
+        console.error('No code in callback');
+        return res.status(400).send('No code provided');
+    }
+    console.log('✅ Authorization code received (first 10 chars):', code.substring(0, 10) + '...');
+
+    // Exchange code for token
+    const params = new URLSearchParams();
+    params.append('client_id', process.env.DISCORD_CLIENT_ID);
+    params.append('client_secret', process.env.DISCORD_CLIENT_SECRET);
+    params.append('grant_type', 'authorization_code');
+    params.append('code', code);
+    params.append('redirect_uri', DISCORD_CALLBACK_URL);
+    params.append('scope', DISCORD_SCOPES.join(' '));
+
+    try {
+        console.log('Exchanging code for token...');
+        const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
+            method: 'POST',
+            body: params,
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+        });
+        const tokenData = await tokenRes.json();
+        console.log('Token exchange response status:', tokenRes.status);
+        if (!tokenRes.ok) {
+            console.error('Token exchange failed:', tokenData);
+            return res.status(500).send('Token exchange failed: ' + JSON.stringify(tokenData));
+        }
+        console.log('Token exchange successful, access token received');
+
+        // Fetch user profile
+        const userRes = await fetch('https://discord.com/api/users/@me', {
+            headers: { Authorization: `Bearer ${tokenData.access_token}` }
+        });
+        const profile = await userRes.json();
+        console.log('Discord profile:', profile);
+
+        // Extract info
+        const id = profile.id;
+        const username = profile.username;
+        const avatar = profile.avatar ? `https://cdn.discordapp.com/avatars/${id}/${profile.avatar}.png` : null;
+        const email = profile.email || null;
+
+        // Save user to database
+        let result = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
+        let user = result.rows[0];
+        if (!user) {
+            console.log('🆕 New Discord user, inserting');
+            const insert = await pool.query(
+                'INSERT INTO users (id, username, avatar, email, provider) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+                [id, username, avatar, email, 'discord']
+            );
+            user = insert.rows[0];
+        } else {
+            console.log('🔄 Existing Discord user, updating');
+            await pool.query(
+                'UPDATE users SET avatar = $1, email = $2 WHERE id = $3',
+                [avatar, email, id]
+            );
+            result = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
+            user = result.rows[0];
+        }
+
+        // Manually log user in via Passport
+        req.login(user, (err) => {
+            if (err) {
+                console.error('Login error:', err);
+                return res.status(500).send('Login failed');
+            }
+            console.log('✅ Discord authentication successful, user:', user.id);
+            if (!user.chosen_username) {
+                // Discord users need to choose a username (like Google)
+                res.redirect('/choose-username');
+            } else {
+                res.redirect('/');
+            }
+        });
+    } catch (err) {
+        console.error('❌ Discord OAuth error:', err);
+        res.status(500).send('Discord authentication failed: ' + err.message);
+    }
+});
 
 // ----------------------------------------------------------------------
 // Middleware
@@ -298,12 +400,11 @@ app.get('/auth/github/callback',
     passport.authenticate('github', { failureRedirect: '/' }),
     (req, res) => {
         console.log('✅ GitHub authentication successful, user:', req.user.id);
-        // GitHub users have chosen_username already set, so no redirect to choose-username
         res.redirect('/');
     }
 );
 
-// Username selection (only for providers that don't auto-set)
+// Username selection
 app.get('/choose-username', ensureAuthenticated, (req, res) => {
     res.render('choose-username', { user: req.user });
 });
@@ -330,11 +431,6 @@ app.get('/logout', (req, res) => {
         if (err) console.error(err);
         res.redirect('/');
     });
-});
-
-// Discord placeholder (if you want to keep it)
-app.get('/auth/discord', (req, res) => {
-    res.send('Discord login is temporarily unavailable. Please use Google or GitHub.');
 });
 
 // Webhook generation (protected)
@@ -501,10 +597,10 @@ app.post('/admin/proxy', ensureAdmin, express.json(), async (req, res) => {
         if (method === 'POST' || method === 'PATCH') {
             if (contentType === 'json') {
                 fetchOptions.headers['Content-Type'] = 'application/json';
-                fetchOptions.body = body; // body is already a JSON string from the textarea
+                fetchOptions.body = body;
             } else if (contentType === 'text') {
                 fetchOptions.headers['Content-Type'] = 'text/plain';
-                fetchOptions.body = body; // send as plain text
+                fetchOptions.body = body;
             }
         }
 
