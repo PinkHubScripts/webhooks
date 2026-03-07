@@ -7,7 +7,6 @@ const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const path = require('path');
 const db = require('./db');
-const fetch = require('node-fetch'); // kept for possible Discord later
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -32,7 +31,7 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 app.use(bodyParser.raw({ type: '*/*' }));
-app.use(express.urlencoded({ extended: true })); // for username form
+app.use(express.urlencoded({ extended: true }));
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
@@ -58,16 +57,20 @@ passport.use(new GoogleStrategy({
       // Check if user exists
       let user = db.prepare('SELECT * FROM users WHERE id = ?').get(profile.id);
       if (!user) {
-        // New user – insert with provider = 'google'
+        // New user – insert
         const stmt = db.prepare(`
           INSERT INTO users (id, username, avatar, provider)
           VALUES (?, ?, ?, 'google')
         `);
         stmt.run(profile.id, profile.displayName, profile.photos[0]?.value);
         user = db.prepare('SELECT * FROM users WHERE id = ?').get(profile.id);
+        console.log('🆕 New Google user created:', user);
       } else {
-        // Update avatar in case it changed
+        // Update avatar
         db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(profile.photos[0]?.value, profile.id);
+        // Refresh user data
+        user = db.prepare('SELECT * FROM users WHERE id = ?').get(profile.id);
+        console.log('🔄 Existing Google user logged in:', user);
       }
       return done(null, user);
     } catch (err) {
@@ -78,10 +81,10 @@ passport.use(new GoogleStrategy({
 ));
 
 // ----------------------------------------------------------------------
-// 4. Discord route (simplified placeholder – avoids rate limits)
+// 4. Discord placeholder (avoids rate limits)
 // ----------------------------------------------------------------------
 app.get('/auth/discord', (req, res) => {
-    res.send('Discord login is temporarily unavailable due to rate limiting. Please use Google.');
+    res.send('Discord login is temporarily unavailable. Please use Google.');
 });
 
 // ----------------------------------------------------------------------
@@ -101,15 +104,17 @@ app.get('/', (req, res) => {
 // Google login
 app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
 
-// Google callback
+// Google callback – with detailed logging
 app.get('/auth/google/callback', 
     passport.authenticate('google', { failureRedirect: '/' }),
     (req, res) => {
-        // After login, check if the user has chosen a username yet
+        console.log('✅ Google callback successful. User:', req.user);
+        console.log('chosen_username =', req.user.chosen_username);
         if (!req.user.chosen_username) {
-            // First-time Google user – redirect to username selection
+            console.log('➡️ Redirecting to /choose-username');
             res.redirect('/choose-username');
         } else {
+            console.log('➡️ Redirecting to home (username already set)');
             res.redirect('/');
         }
     }
@@ -125,10 +130,10 @@ app.post('/choose-username', ensureAuthenticated, (req, res) => {
     if (!username || username.length < 3) {
         return res.render('choose-username', { user: req.user, error: 'Username must be at least 3 characters.' });
     }
-    // Optional: check if username already taken (can add later)
     db.prepare('UPDATE users SET chosen_username = ? WHERE id = ?').run(username, req.user.id);
     // Update session user
     req.user.chosen_username = username;
+    console.log(`✅ Username set to "${username}" for user ${req.user.id}`);
     res.redirect('/');
 });
 
