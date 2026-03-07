@@ -125,7 +125,7 @@ passport.deserializeUser(async (id, done) => {
 });
 
 // ----------------------------------------------------------------------
-// Google Strategy
+// Google Strategy (still prompts for username)
 // ----------------------------------------------------------------------
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
@@ -143,12 +143,14 @@ passport.use(new GoogleStrategy({
       let user = result.rows[0];
       
       if (!user) {
+        // New Google user – do NOT set chosen_username automatically
         const insert = await pool.query(
           'INSERT INTO users (id, username, avatar, email, provider) VALUES ($1, $2, $3, $4, $5) RETURNING *',
           [profile.id, profile.displayName, profile.photos[0]?.value, email, 'google']
         );
         user = insert.rows[0];
       } else {
+        // Update avatar and email for existing user
         await pool.query(
           'UPDATE users SET avatar = $1, email = $2 WHERE id = $3',
           [profile.photos[0]?.value, email, profile.id]
@@ -167,22 +169,21 @@ passport.use(new GoogleStrategy({
 ));
 
 // ----------------------------------------------------------------------
-// GitHub Strategy
+// GitHub Strategy – automatically sets chosen_username
 // ----------------------------------------------------------------------
 passport.use(new GitHubStrategy({
     clientID: process.env.GITHUB_CLIENT_ID,
     clientSecret: process.env.GITHUB_CLIENT_SECRET,
     callbackURL: 'https://webhooks-gwsp.onrender.com/auth/github/callback',
-    scope: ['user:email'] // request email access
+    scope: ['user:email']
   },
   async (accessToken, refreshToken, profile, done) => {
     console.log('✅ GitHub strategy verify');
     console.log('Profile ID:', profile.id);
     console.log('Username:', profile.username);
-    console.log('Emails:', profile.emails); // may be array of email objects
+    console.log('Emails:', profile.emails);
 
     try {
-      // GitHub may provide email in profile.emails array
       const emailObj = profile.emails && profile.emails.find(e => e.primary === true) || profile.emails?.[0];
       const email = emailObj ? emailObj.value : null;
       const avatar = profile.photos?.[0]?.value || null;
@@ -192,12 +193,14 @@ passport.use(new GitHubStrategy({
       let user = result.rows[0];
 
       if (!user) {
+        // New GitHub user – automatically set chosen_username to their GitHub username
         const insert = await pool.query(
-          'INSERT INTO users (id, username, avatar, email, provider) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-          [profile.id, username, avatar, email, 'github']
+          'INSERT INTO users (id, username, avatar, email, provider, chosen_username) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+          [profile.id, username, avatar, email, 'github', username]
         );
         user = insert.rows[0];
       } else {
+        // Update avatar and email for existing user
         await pool.query(
           'UPDATE users SET avatar = $1, email = $2 WHERE id = $3',
           [avatar, email, profile.id]
@@ -295,15 +298,12 @@ app.get('/auth/github/callback',
     passport.authenticate('github', { failureRedirect: '/' }),
     (req, res) => {
         console.log('✅ GitHub authentication successful, user:', req.user.id);
-        if (!req.user.chosen_username) {
-            res.redirect('/choose-username');
-        } else {
-            res.redirect('/');
-        }
+        // GitHub users have chosen_username already set, so no redirect to choose-username
+        res.redirect('/');
     }
 );
 
-// Username selection
+// Username selection (only for providers that don't auto-set)
 app.get('/choose-username', ensureAuthenticated, (req, res) => {
     res.render('choose-username', { user: req.user });
 });
