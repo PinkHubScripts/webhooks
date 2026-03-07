@@ -485,20 +485,29 @@ app.get('/admin/tester', ensureAdmin, (req, res) => {
     res.render('tester', { user: req.user });
 });
 
-// Proxy endpoint for webhook tester
+// Proxy endpoint for webhook tester (supports JSON and plain text)
 app.post('/admin/proxy', ensureAdmin, express.json(), async (req, res) => {
-    const { method, url, body } = req.body;
+    const { method, url, body, contentType = 'json' } = req.body;
     if (!url) {
         return res.status(400).json({ error: 'URL required' });
     }
     try {
         const fetchOptions = {
             method: method,
-            headers: { 'Content-Type': 'application/json' },
+            headers: {}
         };
-        if (body && (method === 'POST' || method === 'PATCH')) {
-            fetchOptions.body = body;
+
+        // Set Content-Type based on user selection
+        if (method === 'POST' || method === 'PATCH') {
+            if (contentType === 'json') {
+                fetchOptions.headers['Content-Type'] = 'application/json';
+                fetchOptions.body = body; // body is already a JSON string from the textarea
+            } else if (contentType === 'text') {
+                fetchOptions.headers['Content-Type'] = 'text/plain';
+                fetchOptions.body = body; // send as plain text
+            }
         }
+
         const response = await fetch(url, fetchOptions);
         const responseText = await response.text();
         res.json({
