@@ -7,33 +7,28 @@
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-100 min-h-screen">
-    <!-- Navigation bar with title left-aligned -->
-<nav class="bg-white shadow px-6 py-4 flex items-center justify-between">
-    <div class="flex items-center gap-3">
-        <h1 class="text-xl font-bold">🌸 Pink Webhook Generator</h1>
+    <!-- Navbar: title + user on left, logout on right -->
+    <nav class="bg-white shadow px-6 py-4 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+            <h1 class="text-xl font-bold">🌸 Pink Webhook Generator</h1>
+            <% if (user) { %>
+                <div class="flex items-center gap-2 ml-6">
+                    <img src="https://cdn.discordapp.com/avatars/<%= user.id %>/<%= user.avatar %>.png" 
+                         alt="avatar" 
+                         class="w-8 h-8 rounded-full"
+                         onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'">
+                    <span class="font-medium"><%= user.username %></span>
+                </div>
+            <% } %>
+        </div>
         <% if (user) { %>
-            <div class="flex items-center gap-2 ml-6">
-                <img src="https://cdn.discordapp.com/avatars/<%= user.id %>/<%= user.avatar %>.png" 
-                     alt="avatar" 
-                     class="w-8 h-8 rounded-full"
-                     onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'">
-                <span class="font-medium"><%= user.username %></span>
-            </div>
+            <a href="/logout" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 text-sm">Logout</a>
         <% } %>
-    </div>
-    <% if (user) { %>
-        <a href="/logout" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 text-sm">Logout</a>
-    <% } %>
-</nav>
+    </nav>
 
     <main class="max-w-4xl mx-auto p-6">
         <% if (user) { %>
-            <!-- Logged‑in view -->
-            <div class="flex justify-between items-center mb-6">
-                <h2 class="text-2xl font-semibold">Welcome, <%= user.username %>!</h2>
-                <a href="/logout" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">Logout</a>
-            </div>
-
+            <!-- Logged‑in dashboard -->
             <div class="bg-white rounded-lg shadow p-6 mb-6">
                 <h2 class="text-2xl font-semibold mb-4">Generate a new webhook URL</h2>
                 <button id="generateBtn" class="bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition">
@@ -78,7 +73,7 @@
                 <% } %>
             </div>
         <% } else { %>
-            <!-- Bigger, centered sign‑in box -->
+            <!-- Centered sign‑in for logged‑out users (larger) -->
             <div class="min-h-[70vh] flex items-center justify-center">
                 <div class="bg-white rounded-lg shadow-xl p-16 text-center max-w-2xl">
                     <h2 class="text-4xl font-bold mb-6">🌸 Pink Webhook Generator</h2>
