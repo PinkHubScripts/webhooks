@@ -1,3 +1,12 @@
+// Test database connection
+try {
+    db.prepare('SELECT 1').get();
+    console.log('Database connected');
+} catch (err) {
+    console.error('Database error:', err);
+    process.exit(1);
+}
+
 require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
