@@ -29,10 +29,10 @@ passport.deserializeUser((id, done) => {
 });
 
 passport.use(new DiscordStrategy({
-  clientID: process.env.DISCORD_CLIENT_ID,
-  clientSecret: process.env.DISCORD_CLIENT_SECRET,
-  callbackURL: '/auth/discord/callback',
-  scope: ['identify']
+    clientID: process.env.DISCORD_CLIENT_ID,
+    clientSecret: process.env.DISCORD_CLIENT_SECRET,
+    callbackURL: '/auth/discord/callback',
+    scope: ['identify', 'email', 'guilds']   // add scopes here
 }, (accessToken, refreshToken, profile, done) => {
   passport._strategies.discord._oauth2.on('error', (err) => {
     console.error('Discord OAuth2 error:', err);
