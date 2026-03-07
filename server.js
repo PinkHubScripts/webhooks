@@ -146,8 +146,11 @@ app.get('/choose-username', (req, res, next) => {
 });
 
 app.post('/choose-username', ensureAuthenticated, (req, res) => {
+    console.log('POST /choose-username body:', req.body);
     const { username } = req.body;
+    console.log('Username received:', username);
     if (!username || username.length < 3) {
+        console.log('Validation failed: username length =', username ? username.length : 'null');
         return res.render('choose-username', { user: req.user, error: 'Username must be at least 3 characters.' });
     }
     db.prepare('UPDATE users SET chosen_username = ? WHERE id = ?').run(username, req.user.id);
