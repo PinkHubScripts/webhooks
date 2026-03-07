@@ -12,9 +12,11 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ----------------------------------------------------------------------
-// 0. Environment logs
+// 0. Environment logs (first few chars only)
 // ----------------------------------------------------------------------
 console.log('🔍 GOOGLE_CLIENT_ID:', process.env.GOOGLE_CLIENT_ID ? '✅ set' : '❌ MISSING');
+console.log('🔍 GOOGLE_CLIENT_SECRET (first 4 chars):', 
+    process.env.GOOGLE_CLIENT_SECRET ? process.env.GOOGLE_CLIENT_SECRET.substring(0,4) : '❌ MISSING');
 console.log('🔍 SESSION_SECRET (first 4 chars):', 
     process.env.SESSION_SECRET ? process.env.SESSION_SECRET.substring(0,4) : '❌ MISSING');
 
@@ -38,14 +40,19 @@ app.set('views', path.join(__dirname, 'views'));
 // ----------------------------------------------------------------------
 // 2. Passport serialization
 // ----------------------------------------------------------------------
-passport.serializeUser((user, done) => done(null, user.id));
+passport.serializeUser((user, done) => {
+    console.log('Serializing user:', user.id);
+    done(null, user.id);
+});
+
 passport.deserializeUser((id, done) => {
+    console.log('Deserializing user:', id);
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
     done(null, user);
 });
 
 // ----------------------------------------------------------------------
-// 3. Google Strategy
+// 3. Google Strategy with detailed logging
 // ----------------------------------------------------------------------
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
@@ -53,46 +60,44 @@ passport.use(new GoogleStrategy({
     callbackURL: 'https://webhooks-gwsp.onrender.com/auth/google/callback'
   },
   (accessToken, refreshToken, profile, done) => {
+    console.log('✅ Google strategy verify function called');
+    console.log('Profile ID:', profile.id);
+    console.log('Display name:', profile.displayName);
+    console.log('Photos:', profile.photos);
+    
     try {
       // Check if user exists
       let user = db.prepare('SELECT * FROM users WHERE id = ?').get(profile.id);
       if (!user) {
-        // New user – insert
+        console.log('🆕 New user, inserting into database');
         const stmt = db.prepare(`
           INSERT INTO users (id, username, avatar, provider)
           VALUES (?, ?, ?, 'google')
         `);
         stmt.run(profile.id, profile.displayName, profile.photos[0]?.value);
         user = db.prepare('SELECT * FROM users WHERE id = ?').get(profile.id);
-        console.log('🆕 New Google user created:', user);
+        console.log('New user inserted:', user);
       } else {
-        // Update avatar
+        console.log('🔄 Existing user, updating avatar');
         db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(profile.photos[0]?.value, profile.id);
-        // Refresh user data
         user = db.prepare('SELECT * FROM users WHERE id = ?').get(profile.id);
-        console.log('🔄 Existing Google user logged in:', user);
+        console.log('Updated user:', user);
       }
       return done(null, user);
     } catch (err) {
-      console.error('Google auth error:', err);
+      console.error('❌ Database error in Google strategy:', err);
       return done(err);
     }
   }
 ));
 
 // ----------------------------------------------------------------------
-// 4. Discord placeholder (avoids rate limits)
-// ----------------------------------------------------------------------
-app.get('/auth/discord', (req, res) => {
-    res.send('Discord login is temporarily unavailable. Please use Google.');
-});
-
-// ----------------------------------------------------------------------
-// 5. Routes
+// 4. Routes
 // ----------------------------------------------------------------------
 
 // Home
 app.get('/', (req, res) => {
+    console.log('Home route, isAuthenticated:', req.isAuthenticated());
     if (req.isAuthenticated()) {
         const keys = db.prepare('SELECT * FROM webhook_keys WHERE user_id = ? ORDER BY created_at DESC').all(req.user.id);
         res.render('index', { user: req.user, keys });
@@ -104,23 +109,35 @@ app.get('/', (req, res) => {
 // Google login
 app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
 
-// Google callback – with detailed logging
+// Google callback – with explicit success and failure handlers
 app.get('/auth/google/callback', 
-    passport.authenticate('google', { failureRedirect: '/' }),
+    (req, res, next) => {
+        console.log('📞 Google callback reached');
+        console.log('Query:', req.query);
+        if (req.query.error) {
+            console.error('Google returned error:', req.query.error);
+            return res.status(400).send('Google error: ' + req.query.error);
+        }
+        next();
+    },
+    passport.authenticate('google', { 
+        failureRedirect: '/',
+        failureMessage: true 
+    }),
     (req, res) => {
-        console.log('✅ Google callback successful. User:', req.user);
-        console.log('chosen_username =', req.user.chosen_username);
+        // Success
+        console.log('✅ Google authentication successful, user:', req.user);
         if (!req.user.chosen_username) {
             console.log('➡️ Redirecting to /choose-username');
             res.redirect('/choose-username');
         } else {
-            console.log('➡️ Redirecting to home (username already set)');
+            console.log('➡️ Redirecting to home');
             res.redirect('/');
         }
     }
 );
 
-// Username selection page
+// Username selection
 app.get('/choose-username', ensureAuthenticated, (req, res) => {
     res.render('choose-username', { user: req.user });
 });
@@ -131,7 +148,6 @@ app.post('/choose-username', ensureAuthenticated, (req, res) => {
         return res.render('choose-username', { user: req.user, error: 'Username must be at least 3 characters.' });
     }
     db.prepare('UPDATE users SET chosen_username = ? WHERE id = ?').run(username, req.user.id);
-    // Update session user
     req.user.chosen_username = username;
     console.log(`✅ Username set to "${username}" for user ${req.user.id}`);
     res.redirect('/');
@@ -143,6 +159,11 @@ app.get('/logout', (req, res) => {
         if (err) console.error(err);
         res.redirect('/');
     });
+});
+
+// Discord placeholder
+app.get('/auth/discord', (req, res) => {
+    res.send('Discord login is temporarily unavailable. Please use Google.');
 });
 
 // Webhook generation (protected)
@@ -189,7 +210,7 @@ app.get('/view/:key', ensureAuthenticated, (req, res) => {
     res.render('view-key', { key, requests, user: req.user });
 });
 
-// API endpoint
+// API endpoint (protected)
 app.get('/api/webhook/:key', ensureAuthenticated, (req, res) => {
     const { key } = req.params;
     const keyOwner = db.prepare('SELECT user_id FROM webhook_keys WHERE key = ?').get(key);
@@ -201,7 +222,7 @@ app.get('/api/webhook/:key', ensureAuthenticated, (req, res) => {
 });
 
 // ----------------------------------------------------------------------
-// 6. Auth middleware
+// 5. Auth middleware
 // ----------------------------------------------------------------------
 function ensureAuthenticated(req, res, next) {
     if (req.isAuthenticated()) return next();
@@ -209,7 +230,7 @@ function ensureAuthenticated(req, res, next) {
 }
 
 // ----------------------------------------------------------------------
-// 7. DB test
+// 6. Database check
 // ----------------------------------------------------------------------
 try {
     db.prepare('SELECT 1').get();
@@ -219,6 +240,9 @@ try {
     process.exit(1);
 }
 
+// ----------------------------------------------------------------------
+// 7. Start server
+// ----------------------------------------------------------------------
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
 });
