@@ -12,7 +12,13 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ----------------------------------------------------------------------
-// 0. Environment logs
+// Admin configuration
+// ----------------------------------------------------------------------
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim());
+console.log('👑 Admin emails:', ADMIN_EMAILS);
+
+// ----------------------------------------------------------------------
+// Environment logs
 // ----------------------------------------------------------------------
 console.log('🔍 GOOGLE_CLIENT_ID:', process.env.GOOGLE_CLIENT_ID ? '✅ set' : '❌ MISSING');
 console.log('🔍 GOOGLE_CLIENT_SECRET (first 4 chars):', 
@@ -21,7 +27,7 @@ console.log('🔍 SESSION_SECRET (first 4 chars):',
     process.env.SESSION_SECRET ? process.env.SESSION_SECRET.substring(0,4) : '❌ MISSING');
 
 // ----------------------------------------------------------------------
-// 1. Session configuration
+// Session configuration
 // ----------------------------------------------------------------------
 app.use(session({
     secret: process.env.SESSION_SECRET,
@@ -38,9 +44,7 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
-// ----------------------------------------------------------------------
-// 2. Body parsers – raw only for webhooks, urlencoded for forms
-// ----------------------------------------------------------------------
+// Body parsers
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use('/webhook', bodyParser.raw({ type: '*/*' }));
@@ -49,7 +53,7 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
 // ----------------------------------------------------------------------
-// 3. Passport serialization
+// Passport serialization
 // ----------------------------------------------------------------------
 passport.serializeUser((user, done) => {
     console.log('Serializing user:', user.id);
@@ -59,11 +63,15 @@ passport.serializeUser((user, done) => {
 passport.deserializeUser((id, done) => {
     console.log('Deserializing user:', id);
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    if (user) {
+        // Add isAdmin flag
+        user.isAdmin = ADMIN_EMAILS.includes(user.email);
+    }
     done(null, user);
 });
 
 // ----------------------------------------------------------------------
-// 4. Google Strategy
+// Google Strategy – store email
 // ----------------------------------------------------------------------
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
@@ -73,22 +81,26 @@ passport.use(new GoogleStrategy({
   (accessToken, refreshToken, profile, done) => {
     console.log('✅ Google strategy verify function called');
     console.log('Profile ID:', profile.id);
+    console.log('Email:', profile.emails?.[0]?.value);
     
     try {
       let user = db.prepare('SELECT * FROM users WHERE id = ?').get(profile.id);
+      const email = profile.emails?.[0]?.value || null;
       if (!user) {
         console.log('🆕 New user, inserting into database');
         const stmt = db.prepare(`
-          INSERT INTO users (id, username, avatar, provider)
-          VALUES (?, ?, ?, 'google')
+          INSERT INTO users (id, username, avatar, email, provider)
+          VALUES (?, ?, ?, ?, 'google')
         `);
-        stmt.run(profile.id, profile.displayName, profile.photos[0]?.value);
+        stmt.run(profile.id, profile.displayName, profile.photos[0]?.value, email);
         user = db.prepare('SELECT * FROM users WHERE id = ?').get(profile.id);
       } else {
-        console.log('🔄 Existing user, updating avatar');
-        db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(profile.photos[0]?.value, profile.id);
+        console.log('🔄 Existing user, updating avatar and email');
+        db.prepare('UPDATE users SET avatar = ?, email = ? WHERE id = ?').run(profile.photos[0]?.value, email, profile.id);
         user = db.prepare('SELECT * FROM users WHERE id = ?').get(profile.id);
       }
+      // Add isAdmin flag
+      user.isAdmin = ADMIN_EMAILS.includes(user.email);
       return done(null, user);
     } catch (err) {
       console.error('❌ Database error:', err);
@@ -98,7 +110,25 @@ passport.use(new GoogleStrategy({
 ));
 
 // ----------------------------------------------------------------------
-// 5. Routes
+// Middleware: ensure authenticated
+// ----------------------------------------------------------------------
+function ensureAuthenticated(req, res, next) {
+    if (req.isAuthenticated()) return next();
+    res.redirect('/');
+}
+
+// ----------------------------------------------------------------------
+// Middleware: ensure admin
+// ----------------------------------------------------------------------
+function ensureAdmin(req, res, next) {
+    if (req.isAuthenticated() && req.user.isAdmin) {
+        return next();
+    }
+    res.status(403).send('Forbidden: Admins only');
+}
+
+// ----------------------------------------------------------------------
+// Routes
 // ----------------------------------------------------------------------
 
 // Home
@@ -106,7 +136,10 @@ app.get('/', (req, res) => {
     console.log('Home route, isAuthenticated:', req.isAuthenticated());
     if (req.isAuthenticated()) {
         const keys = db.prepare('SELECT * FROM webhook_keys WHERE user_id = ? ORDER BY created_at DESC').all(req.user.id);
-        res.render('index', { user: req.user, keys });
+        // Add isAdmin flag to user for template
+        const user = req.user;
+        user.isAdmin = ADMIN_EMAILS.includes(user.email);
+        res.render('index', { user, keys });
     } else {
         res.render('index', { user: null, keys: [] });
     }
@@ -140,14 +173,7 @@ app.get('/auth/google/callback',
 );
 
 // Username selection
-app.get('/choose-username', (req, res, next) => {
-    console.log('/choose-username route, isAuthenticated:', req.isAuthenticated());
-    if (!req.isAuthenticated()) {
-        console.log('Not authenticated, redirecting to home');
-        return res.redirect('/');
-    }
-    next();
-}, (req, res) => {
+app.get('/choose-username', ensureAuthenticated, (req, res) => {
     res.render('choose-username', { user: req.user });
 });
 
@@ -156,7 +182,6 @@ app.post('/choose-username', ensureAuthenticated, (req, res) => {
     const { username } = req.body;
     console.log('Username received:', username);
     if (!username || username.length < 3) {
-        console.log('Validation failed: username length =', username ? username.length : 'null');
         return res.render('choose-username', { user: req.user, error: 'Username must be at least 3 characters.' });
     }
     db.prepare('UPDATE users SET chosen_username = ? WHERE id = ?').run(username, req.user.id);
@@ -235,36 +260,72 @@ app.get('/api/webhook/:key', ensureAuthenticated, (req, res) => {
     res.json(requests);
 });
 
-// NEW: Delete a webhook key (protected)
+// Delete a webhook key (protected)
 app.post('/delete-key/:key', ensureAuthenticated, (req, res) => {
     const { key } = req.params;
-    // Verify ownership
     const keyOwner = db.prepare('SELECT user_id FROM webhook_keys WHERE key = ?').get(key);
     if (!keyOwner || keyOwner.user_id !== req.user.id) {
         return res.status(403).json({ error: 'Forbidden' });
     }
-
-    // Delete associated requests first (foreign key constraint)
     const deleteRequests = db.prepare('DELETE FROM webhook_requests WHERE key = ?');
     deleteRequests.run(key);
-
-    // Delete the key
     const deleteKey = db.prepare('DELETE FROM webhook_keys WHERE key = ?');
     deleteKey.run(key);
-
     res.json({ success: true });
 });
 
 // ----------------------------------------------------------------------
-// 6. Auth middleware
+// Admin routes
 // ----------------------------------------------------------------------
-function ensureAuthenticated(req, res, next) {
-    if (req.isAuthenticated()) return next();
-    res.redirect('/');
-}
+
+// Admin dashboard
+app.get('/admin', ensureAdmin, (req, res) => {
+    // Get total webhook keys
+    const totalKeys = db.prepare('SELECT COUNT(*) as count FROM webhook_keys').get();
+    // Get all keys with user info
+    const keys = db.prepare(`
+        SELECT wk.key, wk.created_at, u.username, u.email, u.chosen_username
+        FROM webhook_keys wk
+        JOIN users u ON wk.user_id = u.id
+        ORDER BY wk.created_at DESC
+    `).all();
+    res.render('admin', { user: req.user, totalKeys: totalKeys.count, keys });
+});
+
+// Webhook tester page
+app.get('/admin/tester', ensureAdmin, (req, res) => {
+    res.render('tester', { user: req.user });
+});
+
+// Proxy endpoint for webhook tester (to avoid CORS)
+app.post('/admin/proxy', ensureAdmin, express.json(), async (req, res) => {
+    const { method, url, body } = req.body;
+    if (!url) {
+        return res.status(400).json({ error: 'URL required' });
+    }
+    try {
+        const fetchOptions = {
+            method: method,
+            headers: { 'Content-Type': 'application/json' },
+        };
+        if (body && (method === 'POST' || method === 'PATCH')) {
+            fetchOptions.body = body;
+        }
+        const response = await fetch(url, fetchOptions);
+        const responseText = await response.text();
+        res.json({
+            status: response.status,
+            statusText: response.statusText,
+            headers: Object.fromEntries(response.headers.entries()),
+            body: responseText
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 
 // ----------------------------------------------------------------------
-// 7. Database check
+// Database check and start
 // ----------------------------------------------------------------------
 try {
     db.prepare('SELECT 1').get();
@@ -274,9 +335,6 @@ try {
     process.exit(1);
 }
 
-// ----------------------------------------------------------------------
-// 8. Start server
-// ----------------------------------------------------------------------
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
 });
