@@ -12,7 +12,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ----------------------------------------------------------------------
-// 0. Environment logs (first few chars only)
+// 0. Environment logs
 // ----------------------------------------------------------------------
 console.log('🔍 GOOGLE_CLIENT_ID:', process.env.GOOGLE_CLIENT_ID ? '✅ set' : '❌ MISSING');
 console.log('🔍 GOOGLE_CLIENT_SECRET (first 4 chars):', 
@@ -21,13 +21,18 @@ console.log('🔍 SESSION_SECRET (first 4 chars):',
     process.env.SESSION_SECRET ? process.env.SESSION_SECRET.substring(0,4) : '❌ MISSING');
 
 // ----------------------------------------------------------------------
-// 1. Session
+// 1. Session configuration – fixed for production with proxy
 // ----------------------------------------------------------------------
 app.use(session({
     secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
-    cookie: { secure: process.env.NODE_ENV === 'production' }
+    cookie: { 
+        secure: process.env.NODE_ENV === 'production', // true on Render (HTTPS)
+        sameSite: 'lax', // prevents cross-site issues
+        maxAge: 24 * 60 * 60 * 1000 // 1 day (optional)
+    },
+    proxy: true // trust the reverse proxy (Render)
 }));
 
 app.use(passport.initialize());
@@ -52,7 +57,7 @@ passport.deserializeUser((id, done) => {
 });
 
 // ----------------------------------------------------------------------
-// 3. Google Strategy with detailed logging
+// 3. Google Strategy
 // ----------------------------------------------------------------------
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
@@ -62,11 +67,8 @@ passport.use(new GoogleStrategy({
   (accessToken, refreshToken, profile, done) => {
     console.log('✅ Google strategy verify function called');
     console.log('Profile ID:', profile.id);
-    console.log('Display name:', profile.displayName);
-    console.log('Photos:', profile.photos);
     
     try {
-      // Check if user exists
       let user = db.prepare('SELECT * FROM users WHERE id = ?').get(profile.id);
       if (!user) {
         console.log('🆕 New user, inserting into database');
@@ -76,16 +78,14 @@ passport.use(new GoogleStrategy({
         `);
         stmt.run(profile.id, profile.displayName, profile.photos[0]?.value);
         user = db.prepare('SELECT * FROM users WHERE id = ?').get(profile.id);
-        console.log('New user inserted:', user);
       } else {
         console.log('🔄 Existing user, updating avatar');
         db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(profile.photos[0]?.value, profile.id);
         user = db.prepare('SELECT * FROM users WHERE id = ?').get(profile.id);
-        console.log('Updated user:', user);
       }
       return done(null, user);
     } catch (err) {
-      console.error('❌ Database error in Google strategy:', err);
+      console.error('❌ Database error:', err);
       return done(err);
     }
   }
@@ -109,24 +109,20 @@ app.get('/', (req, res) => {
 // Google login
 app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
 
-// Google callback – with explicit success and failure handlers
+// Google callback
 app.get('/auth/google/callback', 
     (req, res, next) => {
         console.log('📞 Google callback reached');
         console.log('Query:', req.query);
         if (req.query.error) {
-            console.error('Google returned error:', req.query.error);
+            console.error('Google error:', req.query.error);
             return res.status(400).send('Google error: ' + req.query.error);
         }
         next();
     },
-    passport.authenticate('google', { 
-        failureRedirect: '/',
-        failureMessage: true 
-    }),
+    passport.authenticate('google', { failureRedirect: '/' }),
     (req, res) => {
-        // Success
-        console.log('✅ Google authentication successful, user:', req.user);
+        console.log('✅ Google authentication successful, user:', req.user.id);
         if (!req.user.chosen_username) {
             console.log('➡️ Redirecting to /choose-username');
             res.redirect('/choose-username');
@@ -137,8 +133,15 @@ app.get('/auth/google/callback',
     }
 );
 
-// Username selection
-app.get('/choose-username', ensureAuthenticated, (req, res) => {
+// Username selection – with auth check log
+app.get('/choose-username', (req, res, next) => {
+    console.log('/choose-username route, isAuthenticated:', req.isAuthenticated());
+    if (!req.isAuthenticated()) {
+        console.log('Not authenticated, redirecting to home');
+        return res.redirect('/');
+    }
+    next();
+}, (req, res) => {
     res.render('choose-username', { user: req.user });
 });
 
