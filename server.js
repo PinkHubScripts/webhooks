@@ -12,7 +12,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ----------------------------------------------------------------------
-// 1. Session configuration (MemoryStore is fine for now)
+// 1. Session configuration (MemoryStore warning is safe to ignore for now)
 // ----------------------------------------------------------------------
 app.use(session({
     secret: process.env.SESSION_SECRET,
@@ -45,7 +45,7 @@ passport.use(new DiscordStrategy({
     clientID: process.env.DISCORD_CLIENT_ID,
     clientSecret: process.env.DISCORD_CLIENT_SECRET,
     callbackURL: DISCORD_CALLBACK_URL,
-    scope: ['identify', 'email', 'guilds'] // adjust scopes as needed
+    scope: ['identify', 'email', 'guilds']
 }, (accessToken, refreshToken, profile, done) => {
     try {
         console.log(`✅ Discord login successful for ${profile.username} (${profile.id})`);
@@ -62,17 +62,7 @@ passport.use(new DiscordStrategy({
 }));
 
 // ----------------------------------------------------------------------
-// 4. Debug OAuth errors (catches low-level token exchange errors)
-// ----------------------------------------------------------------------
-passport._strategies.discord._oauth2.on('error', (err) => {
-    console.error('🔴 Discord OAuth2 raw error:', err);
-    if (err.data) {
-        console.error('Discord response body:', err.data.toString());
-    }
-});
-
-// ----------------------------------------------------------------------
-// 5. Manual logging route BEFORE passport handles the callback
+// 4. Manual logging route BEFORE passport handles the callback
 // ----------------------------------------------------------------------
 app.get('/auth/discord/callback', (req, res, next) => {
     console.log('📞 Callback reached at', new Date().toISOString());
@@ -94,7 +84,7 @@ app.get('/auth/discord/callback', (req, res, next) => {
 });
 
 // ----------------------------------------------------------------------
-// 6. Other routes
+// 5. Other routes
 // ----------------------------------------------------------------------
 
 // Home page
@@ -163,7 +153,7 @@ app.get('/view/:key', ensureAuthenticated, (req, res) => {
         ORDER BY timestamp DESC
     `).all(key);
 
-    res.render('view-key', { key, requests });
+    res.render('view-key', { key, requests, user: req.user });
 });
 
 // API endpoint for key data (protected)
@@ -178,7 +168,7 @@ app.get('/api/webhook/:key', ensureAuthenticated, (req, res) => {
 });
 
 // ----------------------------------------------------------------------
-// 7. Authentication middleware
+// 6. Authentication middleware
 // ----------------------------------------------------------------------
 function ensureAuthenticated(req, res, next) {
     if (req.isAuthenticated()) return next();
@@ -186,7 +176,7 @@ function ensureAuthenticated(req, res, next) {
 }
 
 // ----------------------------------------------------------------------
-// 8. Test database connection
+// 7. Test database connection
 // ----------------------------------------------------------------------
 try {
     db.prepare('SELECT 1').get();
@@ -197,7 +187,7 @@ try {
 }
 
 // ----------------------------------------------------------------------
-// 9. Start server
+// 8. Start server
 // ----------------------------------------------------------------------
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
