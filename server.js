@@ -10,6 +10,9 @@ const db = require('./db');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+console.log('DISCORD_CLIENT_ID:', process.env.DISCORD_CLIENT_ID);
+console.log('DISCORD_CLIENT_SECRET length:', process.env.DISCORD_CLIENT_SECRET ? process.env.DISCORD_CLIENT_SECRET.length : 'MISSING');
+
 // Session middleware
 app.use(session({
   secret: process.env.SESSION_SECRET,
@@ -28,32 +31,46 @@ passport.deserializeUser((id, done) => {
   done(null, user);
 });
 
+// ---------- Discord Strategy (with absolute URL) ----------
+const DISCORD_CALLBACK_URL = 'https://webhooks-gwsp.onrender.com/auth/discord/callback';
+
 passport.use(new DiscordStrategy({
     clientID: process.env.DISCORD_CLIENT_ID,
     clientSecret: process.env.DISCORD_CLIENT_SECRET,
-    callbackURL: '/auth/discord/callback',
-    scope: ['identify', 'email', 'guilds']   // add scopes here
+    callbackURL: DISCORD_CALLBACK_URL,  // absolute URL
+    scope: ['identify', 'email', 'guilds']
 }, (accessToken, refreshToken, profile, done) => {
-  passport._strategies.discord._oauth2.on('error', (err) => {
-    console.error('Discord OAuth2 error:', err);
-});
-  // Insert or update user in database
-  const stmt = db.prepare(`
-    INSERT OR REPLACE INTO users (id, username, avatar)
-    VALUES (?, ?, ?)
-  `);
-  stmt.run(profile.id, profile.username, profile.avatar);
-  return done(null, profile);
+    try {
+        console.log('Discord auth successful for user:', profile.username);
+        const stmt = db.prepare(`
+            INSERT OR REPLACE INTO users (id, username, avatar)
+            VALUES (?, ?, ?)
+        `);
+        stmt.run(profile.id, profile.username, profile.avatar);
+        return done(null, profile);
+    } catch (err) {
+        console.error('Database error during user save:', err);
+        return done(err);
+    }
 }));
 
-app.use(bodyParser.raw({ type: '*/*' })); // capture raw body for webhooks
-app.set('view engine', 'ejs');
-
-// Middleware to check if user is authenticated
-function ensureAuthenticated(req, res, next) {
-  if (req.isAuthenticated()) return next();
-  res.redirect('/');
-}
+// Add this route BEFORE the passport callback to see what's happening
+app.get('/auth/discord/callback', (req, res, next) => {
+    console.log('Callback reached. Query:', req.query);
+    if (req.query.error) {
+        console.error('Discord returned error:', req.query.error);
+        return res.status(400).send('Discord error: ' + req.query.error);
+    }
+    if (!req.query.code) {
+        console.error('No code in callback');
+        return res.status(400).send('No code provided');
+    }
+    console.log('Authorization code received:', req.query.code);
+    // Now let passport handle it
+    next();
+}, passport.authenticate('discord', { failureRedirect: '/' }), (req, res) => {
+    res.redirect('/');
+});
 
 // ---------- Routes ----------
 
