@@ -72,9 +72,6 @@ console.log('🔍 GOOGLE_CLIENT_SECRET (first 4 chars):',
 console.log('🔍 GITHUB_CLIENT_ID:', process.env.GITHUB_CLIENT_ID ? '✅ set' : '❌ MISSING');
 console.log('🔍 GITHUB_CLIENT_SECRET (first 4 chars):', 
     process.env.GITHUB_CLIENT_SECRET ? process.env.GITHUB_CLIENT_SECRET.substring(0,4) : '❌ MISSING');
-console.log('🔍 DISCORD_CLIENT_ID:', process.env.DISCORD_CLIENT_ID ? '✅ set' : '❌ MISSING');
-console.log('🔍 DISCORD_CLIENT_SECRET (first 4 chars):', 
-    process.env.DISCORD_CLIENT_SECRET ? process.env.DISCORD_CLIENT_SECRET.substring(0,4) : '❌ MISSING');
 console.log('🔍 SESSION_SECRET (first 4 chars):', 
     process.env.SESSION_SECRET ? process.env.SESSION_SECRET.substring(0,4) : '❌ MISSING');
 console.log('🔍 DATABASE_URL:', process.env.DATABASE_URL ? '✅ set' : '❌ MISSING');
@@ -218,121 +215,14 @@ passport.use(new GitHubStrategy({
 ));
 
 // ----------------------------------------------------------------------
-// Discord Manual OAuth (with enhanced error logging)
+// Discord is disabled – show a message
 // ----------------------------------------------------------------------
-const DISCORD_CALLBACK_URL = 'https://webhooks-gwsp.onrender.com/auth/discord/callback';
-const DISCORD_SCOPES = ['identify', 'email', 'guilds'];
-
 app.get('/auth/discord', (req, res) => {
-    const discordAuthUrl = `https://discord.com/oauth2/authorize?client_id=${process.env.DISCORD_CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(DISCORD_CALLBACK_URL)}&scope=${encodeURIComponent(DISCORD_SCOPES.join(' '))}`;
-    console.log('Redirecting to Discord:', discordAuthUrl);
-    res.redirect(discordAuthUrl);
+    res.send('Discord login is currently disabled. Please use Google or GitHub.');
 });
 
-app.get('/auth/discord/callback', async (req, res) => {
-    console.log('📞 Discord callback reached');
-    console.log('Query:', req.query);
-    const { code, error } = req.query;
-    if (error) {
-        console.error('Discord error:', error);
-        return res.status(400).send('Discord error: ' + error);
-    }
-    if (!code) {
-        console.error('No code in callback');
-        return res.status(400).send('No code provided');
-    }
-    console.log('✅ Authorization code received (first 10 chars):', code.substring(0, 10) + '...');
-
-    // Exchange code for token
-    const params = new URLSearchParams();
-    params.append('client_id', process.env.DISCORD_CLIENT_ID);
-    params.append('client_secret', process.env.DISCORD_CLIENT_SECRET);
-    params.append('grant_type', 'authorization_code');
-    params.append('code', code);
-    params.append('redirect_uri', DISCORD_CALLBACK_URL);
-    params.append('scope', DISCORD_SCOPES.join(' '));
-
-    try {
-        console.log('Exchanging code for token...');
-        const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
-            method: 'POST',
-            body: params,
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-        });
-
-        // Log response status and headers
-        console.log('Token exchange response status:', tokenRes.status);
-        console.log('Token exchange response headers:', tokenRes.headers.get('content-type'));
-
-        const responseText = await tokenRes.text(); // Get raw text
-        console.log('Token exchange raw response (first 500 chars):', responseText.substring(0, 500));
-
-        if (!tokenRes.ok) {
-            console.error('Token exchange failed with status', tokenRes.status);
-            return res.status(500).send(`Token exchange failed: ${responseText}`);
-        }
-
-        // Try to parse JSON
-        let tokenData;
-        try {
-            tokenData = JSON.parse(responseText);
-        } catch (parseErr) {
-            console.error('Failed to parse token response as JSON:', parseErr);
-            return res.status(500).send('Invalid JSON response from Discord');
-        }
-
-        console.log('Token exchange successful, access token received');
-
-        // Fetch user profile
-        const userRes = await fetch('https://discord.com/api/users/@me', {
-            headers: { Authorization: `Bearer ${tokenData.access_token}` }
-        });
-        const profile = await userRes.json();
-        console.log('Discord profile:', profile);
-
-        // Extract info
-        const id = profile.id;
-        const username = profile.username;
-        const avatar = profile.avatar ? `https://cdn.discordapp.com/avatars/${id}/${profile.avatar}.png` : null;
-        const email = profile.email || null;
-
-        // Save user to database
-        let result = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
-        let user = result.rows[0];
-        if (!user) {
-            console.log('🆕 New Discord user, inserting');
-            const insert = await pool.query(
-                'INSERT INTO users (id, username, avatar, email, provider) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-                [id, username, avatar, email, 'discord']
-            );
-            user = insert.rows[0];
-        } else {
-            console.log('🔄 Existing Discord user, updating');
-            await pool.query(
-                'UPDATE users SET avatar = $1, email = $2 WHERE id = $3',
-                [avatar, email, id]
-            );
-            result = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
-            user = result.rows[0];
-        }
-
-        // Manually log user in via Passport
-        req.login(user, (err) => {
-            if (err) {
-                console.error('Login error:', err);
-                return res.status(500).send('Login failed');
-            }
-            console.log('✅ Discord authentication successful, user:', user.id);
-            if (!user.chosen_username) {
-                res.redirect('/choose-username');
-            } else {
-                res.redirect('/');
-            }
-        });
-    } catch (err) {
-        console.error('❌ Discord OAuth error:', err);
-        res.status(500).send('Discord authentication failed: ' + err.message);
-    }
+app.get('/auth/discord/callback', (req, res) => {
+    res.send('Discord login is disabled.');
 });
 
 // ----------------------------------------------------------------------
