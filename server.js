@@ -21,7 +21,7 @@ console.log('🔍 SESSION_SECRET (first 4 chars):',
     process.env.SESSION_SECRET ? process.env.SESSION_SECRET.substring(0,4) : '❌ MISSING');
 
 // ----------------------------------------------------------------------
-// 1. Session configuration – fixed for production
+// 1. Session configuration
 // ----------------------------------------------------------------------
 app.use(session({
     secret: process.env.SESSION_SECRET,
@@ -39,15 +39,10 @@ app.use(passport.initialize());
 app.use(passport.session());
 
 // ----------------------------------------------------------------------
-// 2. Body parsers – IMPORTANT: raw only for webhooks, urlencoded for forms
+// 2. Body parsers – raw only for webhooks, urlencoded for forms
 // ----------------------------------------------------------------------
-// Parse application/x-www-form-urlencoded (for username form)
 app.use(express.urlencoded({ extended: true }));
-
-// Parse JSON (if you ever need it – optional)
 app.use(express.json());
-
-// Raw body parser – apply ONLY to /webhook/* routes (after urlencoded/json)
 app.use('/webhook', bodyParser.raw({ type: '*/*' }));
 
 app.set('view engine', 'ejs');
@@ -191,7 +186,7 @@ app.post('/generate', ensureAuthenticated, (req, res) => {
     res.json({ key, webhookUrl: `/webhook/${key}`, viewUrl: `/view/${key}` });
 });
 
-// Public webhook endpoint – now uses raw body parser (mounted earlier)
+// Public webhook endpoint
 app.all('/webhook/:key', (req, res) => {
     const { key } = req.params;
     const keyExists = db.prepare('SELECT key FROM webhook_keys WHERE key = ?').get(key);
@@ -207,7 +202,7 @@ app.all('/webhook/:key', (req, res) => {
         key,
         req.method,
         JSON.stringify(req.headers),
-        req.body.toString('utf8') // req.body is a Buffer thanks to the raw middleware
+        req.body.toString('utf8')
     );
 
     res.status(200).send('Webhook received');
@@ -238,6 +233,26 @@ app.get('/api/webhook/:key', ensureAuthenticated, (req, res) => {
     }
     const requests = db.prepare('SELECT * FROM webhook_requests WHERE key = ? ORDER BY timestamp DESC').all(key);
     res.json(requests);
+});
+
+// NEW: Delete a webhook key (protected)
+app.post('/delete-key/:key', ensureAuthenticated, (req, res) => {
+    const { key } = req.params;
+    // Verify ownership
+    const keyOwner = db.prepare('SELECT user_id FROM webhook_keys WHERE key = ?').get(key);
+    if (!keyOwner || keyOwner.user_id !== req.user.id) {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    // Delete associated requests first (foreign key constraint)
+    const deleteRequests = db.prepare('DELETE FROM webhook_requests WHERE key = ?');
+    deleteRequests.run(key);
+
+    // Delete the key
+    const deleteKey = db.prepare('DELETE FROM webhook_keys WHERE key = ?');
+    deleteKey.run(key);
+
+    res.json({ success: true });
 });
 
 // ----------------------------------------------------------------------
