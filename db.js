@@ -1,13 +1,15 @@
 const Database = require('better-sqlite3');
 const db = new Database('webhooks.db');
 
-// Create tables if they don't exist
+// Create tables if not exist
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     username TEXT,
     avatar TEXT,
-    provider TEXT DEFAULT 'discord',
+    email TEXT,
+    chosen_username TEXT,
+    provider TEXT DEFAULT 'google',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -29,12 +31,11 @@ db.exec(`
   );
 `);
 
-// Add chosen_username column if missing (safe migration)
+// Add email column if missing (safe migration)
 try {
-  db.exec("ALTER TABLE users ADD COLUMN chosen_username TEXT;");
-  console.log("✅ Added chosen_username column to users table.");
+  db.exec("ALTER TABLE users ADD COLUMN email TEXT;");
+  console.log("✅ Added email column to users table.");
 } catch (err) {
-  // Column already exists – ignore error
   if (!err.message.includes("duplicate column name")) {
     console.error("Error adding column:", err);
   }
