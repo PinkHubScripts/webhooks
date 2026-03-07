@@ -293,6 +293,23 @@ app.get('/admin', ensureAdmin, (req, res) => {
     res.render('admin', { user: req.user, totalKeys: totalKeys.count, keys });
 });
 
+// Admin view of any webhook key's logs
+app.get('/admin/view/:key', ensureAdmin, (req, res) => {
+    const { key } = req.params;
+    const keyExists = db.prepare('SELECT key FROM webhook_keys WHERE key = ?').get(key);
+    if (!keyExists) {
+        return res.status(404).send('Webhook key not found');
+    }
+    const requests = db.prepare(`
+        SELECT method, headers, body, timestamp
+        FROM webhook_requests
+        WHERE key = ?
+        ORDER BY timestamp DESC
+    `).all(key);
+    // Reuse the existing view-key.ejs, but pass a flag to hide delete buttons
+    res.render('view-key', { key, requests, user: req.user, isAdminView: true });
+});
+
 // Webhook tester page
 app.get('/admin/tester', ensureAdmin, (req, res) => {
     res.render('tester', { user: req.user });
