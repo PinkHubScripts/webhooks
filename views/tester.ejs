@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Webhook Tester</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100">
+    <nav class="bg-white shadow px-6 py-4 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+            <h1 class="text-xl font-bold">🌸 Webhook Tester</h1>
+            <div class="flex items-center gap-2 ml-6">
+                <img src="<%= user.avatar %>" alt="avatar" class="w-8 h-8 rounded-full">
+                <span class="font-medium"><%= user.chosen_username || user.username %></span>
+            </div>
+        </div>
+        <div class="flex gap-2">
+            <a href="/" class="text-blue-600 hover:underline">Home</a>
+            <a href="/admin" class="text-green-600 hover:underline">Admin Dashboard</a>
+            <a href="/logout" class="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600">Logout</a>
+        </div>
+    </nav>
+
+    <main class="max-w-4xl mx-auto p-6">
+        <div class="bg-white rounded-lg shadow p-6">
+            <h2 class="text-2xl font-bold mb-4">Send a test webhook</h2>
+            <form id="testerForm" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Method</label>
+                    <select id="method" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 rounded-md">
+                        <option value="GET">GET</option>
+                        <option value="POST">POST</option>
+                        <option value="PATCH">PATCH</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">URL</label>
+                    <input type="url" id="url" required placeholder="https://example.com/webhook" 
+                           class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                </div>
+                <div id="bodyContainer">
+                    <label class="block text-sm font-medium text-gray-700">Request Body (JSON)</label>
+                    <textarea id="body" rows="5" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500" placeholder='{"key": "value"}'></textarea>
+                </div>
+                <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Send Request</button>
+            </form>
+
+            <div id="response" class="mt-6 hidden">
+                <h3 class="text-lg font-bold mb-2">Response</h3>
+                <pre id="responseContent" class="bg-gray-100 p-4 rounded overflow-auto max-h-96"></pre>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        document.getElementById('method').addEventListener('change', function() {
+            const bodyContainer = document.getElementById('bodyContainer');
+            if (this.value === 'GET') {
+                bodyContainer.style.display = 'none';
+            } else {
+                bodyContainer.style.display = 'block';
+            }
+        });
+
+        document.getElementById('testerForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const method = document.getElementById('method').value;
+            const url = document.getElementById('url').value;
+            const body = document.getElementById('body').value;
+
+            const responseDiv = document.getElementById('response');
+            const responseContent = document.getElementById('responseContent');
+
+            try {
+                const res = await fetch('/admin/proxy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ method, url, body })
+                });
+                const data = await res.json();
+                responseContent.textContent = JSON.stringify(data, null, 2);
+                responseDiv.classList.remove('hidden');
+            } catch (err) {
+                responseContent.textContent = 'Error: ' + err.message;
+                responseDiv.classList.remove('hidden');
+            }
+        });
+    </script>
+</body>
+</html>
