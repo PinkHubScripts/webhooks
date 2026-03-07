@@ -35,11 +35,20 @@
                         </div>
                         <details>
                             <summary class="cursor-pointer text-blue-600">Headers</summary>
-                            <pre class="bg-gray-100 p-2 mt-2 rounded text-xs overflow-auto"><%= JSON.stringify(JSON.parse(req.headers), null, 2) %></pre>
+                            <pre class="bg-gray-100 p-2 mt-2 rounded text-xs overflow-auto"><% 
+                                let headersObj = {};
+                                try {
+                                    if (req.headers) {
+                                        headersObj = JSON.parse(req.headers);
+                                    }
+                                } catch (e) {
+                                    headersObj = { error: 'Invalid JSON', raw: req.headers };
+                                }
+                                %><%= JSON.stringify(headersObj, null, 2) %></pre>
                         </details>
                         <div class="mt-2">
                             <p class="font-medium">Body:</p>
-                            <pre class="bg-gray-100 p-2 rounded text-xs overflow-auto"><%= req.body %></pre>
+                            <pre class="bg-gray-100 p-2 rounded text-xs overflow-auto"><%= req.body || '(empty)' %></pre>
                         </div>
                     </div>
                 <% }) %>
