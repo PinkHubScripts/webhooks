@@ -46,7 +46,9 @@
                             <td class="px-6 py-4 whitespace-nowrap text-sm font-mono"><%= key.key %></td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm"><%= key.chosen_username || key.username %></td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm"><%= key.email %></td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm"><%= key.created_at %></td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm">
+                                <span class="timestamp-local" data-utc="<%= key.created_at %>"><%= key.created_at %></span>
+                            </td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm space-x-2">
                                 <a href="/admin/view/<%= key.key %>" class="text-blue-600 hover:text-blue-800">View Logs</a>
                                 <button class="deleteKeyBtn text-red-600 hover:text-red-800" data-key="<%= key.key %>">Delete</button>
@@ -60,6 +62,18 @@
 
     <script>
         document.addEventListener('DOMContentLoaded', () => {
+            // Convert all timestamps to local time
+            document.querySelectorAll('.timestamp-local').forEach(el => {
+                const utcDate = el.getAttribute('data-utc');
+                if (utcDate) {
+                    const date = new Date(utcDate);
+                    if (!isNaN(date)) {
+                        el.textContent = date.toLocaleString();
+                    }
+                }
+            });
+
+            // Delete key functionality
             document.querySelectorAll('.deleteKeyBtn').forEach(btn => {
                 btn.addEventListener('click', async (e) => {
                     e.preventDefault();
@@ -70,7 +84,6 @@
                     try {
                         const res = await fetch('/admin/delete-key/' + key, { method: 'POST' });
                         if (res.ok) {
-                            // Remove the row from the table
                             btn.closest('tr').remove();
                             alert('Webhook key deleted.');
                         } else {
