@@ -3,6 +3,7 @@ const express = require('express');
 const session = require('express-session');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const GitHubStrategy = require('passport-github2').Strategy;
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const path = require('path');
@@ -68,6 +69,9 @@ console.log('👑 Admin emails from env:', ADMIN_EMAILS);
 console.log('🔍 GOOGLE_CLIENT_ID:', process.env.GOOGLE_CLIENT_ID ? '✅ set' : '❌ MISSING');
 console.log('🔍 GOOGLE_CLIENT_SECRET (first 4 chars):', 
     process.env.GOOGLE_CLIENT_SECRET ? process.env.GOOGLE_CLIENT_SECRET.substring(0,4) : '❌ MISSING');
+console.log('🔍 GITHUB_CLIENT_ID:', process.env.GITHUB_CLIENT_ID ? '✅ set' : '❌ MISSING');
+console.log('🔍 GITHUB_CLIENT_SECRET (first 4 chars):', 
+    process.env.GITHUB_CLIENT_SECRET ? process.env.GITHUB_CLIENT_SECRET.substring(0,4) : '❌ MISSING');
 console.log('🔍 SESSION_SECRET (first 4 chars):', 
     process.env.SESSION_SECRET ? process.env.SESSION_SECRET.substring(0,4) : '❌ MISSING');
 console.log('🔍 DATABASE_URL:', process.env.DATABASE_URL ? '✅ set' : '❌ MISSING');
@@ -129,25 +133,22 @@ passport.use(new GoogleStrategy({
     callbackURL: 'https://webhooks-gwsp.onrender.com/auth/google/callback'
   },
   async (accessToken, refreshToken, profile, done) => {
-    console.log('✅ Google strategy verify function called');
+    console.log('✅ Google strategy verify');
     console.log('Profile ID:', profile.id);
     console.log('Email:', profile.emails?.[0]?.value);
     
     try {
       const email = profile.emails?.[0]?.value || null;
-      // Check if user exists
       let result = await pool.query('SELECT * FROM users WHERE id = $1', [profile.id]);
       let user = result.rows[0];
       
       if (!user) {
-        console.log('🆕 New user, inserting into database');
         const insert = await pool.query(
           'INSERT INTO users (id, username, avatar, email, provider) VALUES ($1, $2, $3, $4, $5) RETURNING *',
           [profile.id, profile.displayName, profile.photos[0]?.value, email, 'google']
         );
         user = insert.rows[0];
       } else {
-        console.log('🔄 Existing user, updating avatar and email');
         await pool.query(
           'UPDATE users SET avatar = $1, email = $2 WHERE id = $3',
           [profile.photos[0]?.value, email, profile.id]
@@ -159,7 +160,56 @@ passport.use(new GoogleStrategy({
       user.isAdmin = ADMIN_EMAILS.includes(user.email);
       return done(null, user);
     } catch (err) {
-      console.error('❌ Database error:', err);
+      console.error('❌ Google strategy error:', err);
+      return done(err);
+    }
+  }
+));
+
+// ----------------------------------------------------------------------
+// GitHub Strategy
+// ----------------------------------------------------------------------
+passport.use(new GitHubStrategy({
+    clientID: process.env.GITHUB_CLIENT_ID,
+    clientSecret: process.env.GITHUB_CLIENT_SECRET,
+    callbackURL: 'https://webhooks-gwsp.onrender.com/auth/github/callback',
+    scope: ['user:email'] // request email access
+  },
+  async (accessToken, refreshToken, profile, done) => {
+    console.log('✅ GitHub strategy verify');
+    console.log('Profile ID:', profile.id);
+    console.log('Username:', profile.username);
+    console.log('Emails:', profile.emails); // may be array of email objects
+
+    try {
+      // GitHub may provide email in profile.emails array
+      const emailObj = profile.emails && profile.emails.find(e => e.primary === true) || profile.emails?.[0];
+      const email = emailObj ? emailObj.value : null;
+      const avatar = profile.photos?.[0]?.value || null;
+      const username = profile.displayName || profile.username;
+
+      let result = await pool.query('SELECT * FROM users WHERE id = $1', [profile.id]);
+      let user = result.rows[0];
+
+      if (!user) {
+        const insert = await pool.query(
+          'INSERT INTO users (id, username, avatar, email, provider) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+          [profile.id, username, avatar, email, 'github']
+        );
+        user = insert.rows[0];
+      } else {
+        await pool.query(
+          'UPDATE users SET avatar = $1, email = $2 WHERE id = $3',
+          [avatar, email, profile.id]
+        );
+        result = await pool.query('SELECT * FROM users WHERE id = $1', [profile.id]);
+        user = result.rows[0];
+      }
+
+      user.isAdmin = ADMIN_EMAILS.includes(user.email);
+      return done(null, user);
+    } catch (err) {
+      console.error('❌ GitHub strategy error:', err);
       return done(err);
     }
   }
@@ -212,7 +262,6 @@ app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'em
 app.get('/auth/google/callback', 
     (req, res, next) => {
         console.log('📞 Google callback reached');
-        console.log('Query:', req.query);
         if (req.query.error) {
             console.error('Google error:', req.query.error);
             return res.status(400).send('Google error: ' + req.query.error);
@@ -223,10 +272,32 @@ app.get('/auth/google/callback',
     (req, res) => {
         console.log('✅ Google authentication successful, user:', req.user.id);
         if (!req.user.chosen_username) {
-            console.log('➡️ Redirecting to /choose-username');
             res.redirect('/choose-username');
         } else {
-            console.log('➡️ Redirecting to home');
+            res.redirect('/');
+        }
+    }
+);
+
+// GitHub login
+app.get('/auth/github', passport.authenticate('github', { scope: ['user:email'] }));
+
+// GitHub callback
+app.get('/auth/github/callback', 
+    (req, res, next) => {
+        console.log('📞 GitHub callback reached');
+        if (req.query.error) {
+            console.error('GitHub error:', req.query.error);
+            return res.status(400).send('GitHub error: ' + req.query.error);
+        }
+        next();
+    },
+    passport.authenticate('github', { failureRedirect: '/' }),
+    (req, res) => {
+        console.log('✅ GitHub authentication successful, user:', req.user.id);
+        if (!req.user.chosen_username) {
+            res.redirect('/choose-username');
+        } else {
             res.redirect('/');
         }
     }
@@ -240,14 +311,12 @@ app.get('/choose-username', ensureAuthenticated, (req, res) => {
 app.post('/choose-username', ensureAuthenticated, async (req, res) => {
     console.log('POST /choose-username body:', req.body);
     const { username } = req.body;
-    console.log('Username received:', username);
     if (!username || username.length < 3) {
         return res.render('choose-username', { user: req.user, error: 'Username must be at least 3 characters.' });
     }
     try {
         await pool.query('UPDATE users SET chosen_username = $1 WHERE id = $2', [username, req.user.id]);
         req.user.chosen_username = username;
-        console.log(`✅ Username set to "${username}" for user ${req.user.id}`);
         res.redirect('/');
     } catch (err) {
         console.error(err);
@@ -263,9 +332,9 @@ app.get('/logout', (req, res) => {
     });
 });
 
-// Discord placeholder
+// Discord placeholder (if you want to keep it)
 app.get('/auth/discord', (req, res) => {
-    res.send('Discord login is temporarily unavailable. Please use Google.');
+    res.send('Discord login is temporarily unavailable. Please use Google or GitHub.');
 });
 
 // Webhook generation (protected)
@@ -398,12 +467,10 @@ app.get('/admin/view/:key', ensureAdmin, async (req, res) => {
 app.post('/admin/delete-key/:key', ensureAdmin, async (req, res) => {
     const { key } = req.params;
     try {
-        // Check if key exists
         const keyExists = await pool.query('SELECT key FROM webhook_keys WHERE key = $1', [key]);
         if (keyExists.rows.length === 0) {
             return res.status(404).json({ error: 'Key not found' });
         }
-        // Delete requests first (cascade should handle, but explicit is safe)
         await pool.query('DELETE FROM webhook_requests WHERE key = $1', [key]);
         await pool.query('DELETE FROM webhook_keys WHERE key = $1', [key]);
         res.json({ success: true });
@@ -452,6 +519,7 @@ app.get('/debug-me', ensureAuthenticated, (req, res) => {
         email: req.user.email,
         username: req.user.username,
         chosen_username: req.user.chosen_username,
+        provider: req.user.provider,
         isAdmin: req.user.isAdmin,
         adminList: ADMIN_EMAILS
     });
