@@ -21,29 +21,40 @@ console.log('🔍 SESSION_SECRET (first 4 chars):',
     process.env.SESSION_SECRET ? process.env.SESSION_SECRET.substring(0,4) : '❌ MISSING');
 
 // ----------------------------------------------------------------------
-// 1. Session configuration – fixed for production with proxy
+// 1. Session configuration – fixed for production
 // ----------------------------------------------------------------------
 app.use(session({
     secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: { 
-        secure: process.env.NODE_ENV === 'production', // true on Render (HTTPS)
-        sameSite: 'lax', // prevents cross-site issues
-        maxAge: 24 * 60 * 60 * 1000 // 1 day (optional)
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 24 * 60 * 60 * 1000
     },
-    proxy: true // trust the reverse proxy (Render)
+    proxy: true
 }));
 
 app.use(passport.initialize());
 app.use(passport.session());
-app.use(bodyParser.raw({ type: '*/*' }));
+
+// ----------------------------------------------------------------------
+// 2. Body parsers – IMPORTANT: raw only for webhooks, urlencoded for forms
+// ----------------------------------------------------------------------
+// Parse application/x-www-form-urlencoded (for username form)
 app.use(express.urlencoded({ extended: true }));
+
+// Parse JSON (if you ever need it – optional)
+app.use(express.json());
+
+// Raw body parser – apply ONLY to /webhook/* routes (after urlencoded/json)
+app.use('/webhook', bodyParser.raw({ type: '*/*' }));
+
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
 // ----------------------------------------------------------------------
-// 2. Passport serialization
+// 3. Passport serialization
 // ----------------------------------------------------------------------
 passport.serializeUser((user, done) => {
     console.log('Serializing user:', user.id);
@@ -57,7 +68,7 @@ passport.deserializeUser((id, done) => {
 });
 
 // ----------------------------------------------------------------------
-// 3. Google Strategy
+// 4. Google Strategy
 // ----------------------------------------------------------------------
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
@@ -92,7 +103,7 @@ passport.use(new GoogleStrategy({
 ));
 
 // ----------------------------------------------------------------------
-// 4. Routes
+// 5. Routes
 // ----------------------------------------------------------------------
 
 // Home
@@ -133,7 +144,7 @@ app.get('/auth/google/callback',
     }
 );
 
-// Username selection – with auth check log
+// Username selection
 app.get('/choose-username', (req, res, next) => {
     console.log('/choose-username route, isAuthenticated:', req.isAuthenticated());
     if (!req.isAuthenticated()) {
@@ -180,13 +191,14 @@ app.post('/generate', ensureAuthenticated, (req, res) => {
     res.json({ key, webhookUrl: `/webhook/${key}`, viewUrl: `/view/${key}` });
 });
 
-// Public webhook endpoint
+// Public webhook endpoint – now uses raw body parser (mounted earlier)
 app.all('/webhook/:key', (req, res) => {
     const { key } = req.params;
     const keyExists = db.prepare('SELECT key FROM webhook_keys WHERE key = ?').get(key);
     if (!keyExists) {
         return res.status(404).send('Webhook key not found');
     }
+
     const stmt = db.prepare(`
         INSERT INTO webhook_requests (key, method, headers, body)
         VALUES (?, ?, ?, ?)
@@ -195,8 +207,9 @@ app.all('/webhook/:key', (req, res) => {
         key,
         req.method,
         JSON.stringify(req.headers),
-        req.body.toString('utf8')
+        req.body.toString('utf8') // req.body is a Buffer thanks to the raw middleware
     );
+
     res.status(200).send('Webhook received');
 });
 
@@ -228,7 +241,7 @@ app.get('/api/webhook/:key', ensureAuthenticated, (req, res) => {
 });
 
 // ----------------------------------------------------------------------
-// 5. Auth middleware
+// 6. Auth middleware
 // ----------------------------------------------------------------------
 function ensureAuthenticated(req, res, next) {
     if (req.isAuthenticated()) return next();
@@ -236,7 +249,7 @@ function ensureAuthenticated(req, res, next) {
 }
 
 // ----------------------------------------------------------------------
-// 6. Database check
+// 7. Database check
 // ----------------------------------------------------------------------
 try {
     db.prepare('SELECT 1').get();
@@ -247,7 +260,7 @@ try {
 }
 
 // ----------------------------------------------------------------------
-// 7. Start server
+// 8. Start server
 // ----------------------------------------------------------------------
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
