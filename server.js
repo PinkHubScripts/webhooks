@@ -6,7 +6,7 @@ const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const path = require('path');
-const { Pool } = require('pg'); // Use pg
+const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -19,7 +19,7 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-// Initialize tables (run once)
+// Initialize tables
 (async () => {
   try {
     await pool.query(`
@@ -99,7 +99,7 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
 // ----------------------------------------------------------------------
-// Passport serialization (async)
+// Passport serialization
 // ----------------------------------------------------------------------
 passport.serializeUser((user, done) => {
     console.log('Serializing user:', user.id);
@@ -121,7 +121,7 @@ passport.deserializeUser(async (id, done) => {
 });
 
 // ----------------------------------------------------------------------
-// Google Strategy – store email with debug (async)
+// Google Strategy
 // ----------------------------------------------------------------------
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
@@ -182,7 +182,7 @@ function ensureAdmin(req, res, next) {
 }
 
 // ----------------------------------------------------------------------
-// Routes (all async now)
+// Routes
 // ----------------------------------------------------------------------
 
 // Home
@@ -337,7 +337,7 @@ app.get('/api/webhook/:key', ensureAuthenticated, async (req, res) => {
     }
 });
 
-// Delete a webhook key (protected)
+// Delete a webhook key (protected, user-owned)
 app.post('/delete-key/:key', ensureAuthenticated, async (req, res) => {
     const { key } = req.params;
     try {
@@ -391,6 +391,25 @@ app.get('/admin/view/:key', ensureAdmin, async (req, res) => {
     } catch (err) {
         console.error(err);
         res.status(500).send('Database error');
+    }
+});
+
+// Admin delete any webhook key
+app.post('/admin/delete-key/:key', ensureAdmin, async (req, res) => {
+    const { key } = req.params;
+    try {
+        // Check if key exists
+        const keyExists = await pool.query('SELECT key FROM webhook_keys WHERE key = $1', [key]);
+        if (keyExists.rows.length === 0) {
+            return res.status(404).json({ error: 'Key not found' });
+        }
+        // Delete requests first (cascade should handle, but explicit is safe)
+        await pool.query('DELETE FROM webhook_requests WHERE key = $1', [key]);
+        await pool.query('DELETE FROM webhook_keys WHERE key = $1', [key]);
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Error deleting key:', err);
+        res.status(500).json({ error: 'Database error' });
     }
 });
 
