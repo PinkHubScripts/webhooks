@@ -47,8 +47,9 @@
                             <td class="px-6 py-4 whitespace-nowrap text-sm"><%= key.chosen_username || key.username %></td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm"><%= key.email %></td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm"><%= key.created_at %></td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm">
+                            <td class="px-6 py-4 whitespace-nowrap text-sm space-x-2">
                                 <a href="/admin/view/<%= key.key %>" class="text-blue-600 hover:text-blue-800">View Logs</a>
+                                <button class="deleteKeyBtn text-red-600 hover:text-red-800" data-key="<%= key.key %>">Delete</button>
                             </td>
                         </tr>
                     <% }) %>
@@ -56,5 +57,32 @@
             </table>
         </div>
     </main>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            document.querySelectorAll('.deleteKeyBtn').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    e.preventDefault();
+                    const key = btn.dataset.key;
+                    if (!confirm('Are you sure you want to permanently delete this webhook key and all its data? This action cannot be undone.')) {
+                        return;
+                    }
+                    try {
+                        const res = await fetch('/admin/delete-key/' + key, { method: 'POST' });
+                        if (res.ok) {
+                            // Remove the row from the table
+                            btn.closest('tr').remove();
+                            alert('Webhook key deleted.');
+                        } else {
+                            const data = await res.json();
+                            alert('Error: ' + (data.error || 'Could not delete key.'));
+                        }
+                    } catch (err) {
+                        alert('Network error: ' + err.message);
+                    }
+                });
+            });
+        });
+    </script>
 </body>
 </html>
