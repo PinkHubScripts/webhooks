@@ -39,9 +39,16 @@
                     <input type="url" id="url" required placeholder="https://example.com/webhook" 
                            class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500">
                 </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Content Type</label>
+                    <select id="contentType" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 rounded-md">
+                        <option value="json">JSON (application/json)</option>
+                        <option value="text">Plain Text (text/plain)</option>
+                    </select>
+                </div>
                 <div id="bodyContainer">
-                    <label class="block text-sm font-medium text-gray-700">Request Body (JSON)</label>
-                    <textarea id="body" rows="5" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500" placeholder='{"key": "value"}'></textarea>
+                    <label class="block text-sm font-medium text-gray-700">Request Body</label>
+                    <textarea id="body" rows="5" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 font-mono" placeholder='{"key": "value"} or plain text'></textarea>
                 </div>
                 <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Send Request</button>
             </form>
@@ -68,6 +75,7 @@
             const method = document.getElementById('method').value;
             const url = document.getElementById('url').value;
             const body = document.getElementById('body').value;
+            const contentType = document.getElementById('contentType').value;
 
             const responseDiv = document.getElementById('response');
             const responseContent = document.getElementById('responseContent');
@@ -76,7 +84,7 @@
                 const res = await fetch('/admin/proxy', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ method, url, body })
+                    body: JSON.stringify({ method, url, body, contentType })
                 });
                 const data = await res.json();
                 responseContent.textContent = JSON.stringify(data, null, 2);
