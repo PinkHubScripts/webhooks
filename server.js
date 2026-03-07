@@ -1,6 +1,3 @@
-console.log('DISCORD_CLIENT_ID:', process.env.DISCORD_CLIENT_ID);
-console.log('DISCORD_CLIENT_SECRET length:', process.env.DISCORD_CLIENT_SECRET ? process.env.DISCORD_CLIENT_SECRET.length : 'MISSING');
-
 require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
