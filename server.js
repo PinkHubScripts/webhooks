@@ -2,27 +2,25 @@ require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
 const passport = require('passport');
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const path = require('path');
-const db = require('./db'); // SQLite database (kept for now)
-const fetch = require('node-fetch'); // For manual token exchange
+const db = require('./db');
+const fetch = require('node-fetch'); // kept for possible Discord later
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ----------------------------------------------------------------------
-// 0. Log environment variables (safe, only first few chars)
+// 0. Environment logs
 // ----------------------------------------------------------------------
-console.log('🔍 DISCORD_CLIENT_ID:', process.env.DISCORD_CLIENT_ID);
-console.log('🔍 DISCORD_CLIENT_SECRET (first 4 chars):', 
-    process.env.DISCORD_CLIENT_SECRET ? process.env.DISCORD_CLIENT_SECRET.substring(0,4) : '❌ MISSING');
+console.log('🔍 GOOGLE_CLIENT_ID:', process.env.GOOGLE_CLIENT_ID ? '✅ set' : '❌ MISSING');
 console.log('🔍 SESSION_SECRET (first 4 chars):', 
     process.env.SESSION_SECRET ? process.env.SESSION_SECRET.substring(0,4) : '❌ MISSING');
-console.log('🔍 NODE_ENV:', process.env.NODE_ENV);
 
 // ----------------------------------------------------------------------
-// 1. Session configuration (MemoryStore warning is safe to ignore for now)
+// 1. Session
 // ----------------------------------------------------------------------
 app.use(session({
     secret: process.env.SESSION_SECRET,
@@ -34,11 +32,12 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 app.use(bodyParser.raw({ type: '*/*' }));
+app.use(express.urlencoded({ extended: true })); // for username form
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
 // ----------------------------------------------------------------------
-// 2. Passport serialization (we still need this for session handling)
+// 2. Passport serialization
 // ----------------------------------------------------------------------
 passport.serializeUser((user, done) => done(null, user.id));
 passport.deserializeUser((id, done) => {
@@ -47,97 +46,49 @@ passport.deserializeUser((id, done) => {
 });
 
 // ----------------------------------------------------------------------
-// 3. Manual OAuth callback – NO passport.authenticate here
+// 3. Google Strategy
 // ----------------------------------------------------------------------
-const DISCORD_CALLBACK_URL = 'https://webhooks-gwsp.onrender.com/auth/discord/callback';
-
-app.get('/auth/discord/callback', (req, res) => {
-    console.log('📞 Callback reached at', new Date().toISOString());
-    console.log('Query params:', req.query);
-    
-    const { code, error } = req.query;
-    if (error) {
-        console.error('Discord returned error:', error);
-        return res.status(400).send('Discord error: ' + error);
-    }
-    if (!code) {
-        console.error('No code in callback');
-        return res.status(400).send('No code provided');
-    }
-    console.log('✅ Authorization code received (first 10 chars):', code.substring(0, 10) + '...');
-
-    // --- Manual token exchange ---
-    const params = new URLSearchParams();
-    params.append('client_id', process.env.DISCORD_CLIENT_ID);
-    params.append('client_secret', process.env.DISCORD_CLIENT_SECRET);
-    params.append('grant_type', 'authorization_code');
-    params.append('code', code);
-    params.append('redirect_uri', DISCORD_CALLBACK_URL);
-    params.append('scope', 'identify email guilds');
-
-    fetch('https://discord.com/api/oauth2/token', {
-        method: 'POST',
-        body: params,
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-    })
-    .then(response => response.json())
-    .then(tokenData => {
-        console.log('Token exchange response keys:', Object.keys(tokenData));
-        if (!tokenData.access_token) {
-            throw new Error('Failed to get access token: ' + JSON.stringify(tokenData));
-        }
-        // Fetch user profile with the access token
-        return fetch('https://discord.com/api/users/@me', {
-            headers: { Authorization: `Bearer ${tokenData.access_token}` }
-        });
-    })
-    .then(response => response.json())
-    .then(profile => {
-        console.log(`✅ Discord login successful for ${profile.username} (${profile.id})`);
-        // Save user to database
+passport.use(new GoogleStrategy({
+    clientID: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    callbackURL: 'https://webhooks-gwsp.onrender.com/auth/google/callback'
+  },
+  (accessToken, refreshToken, profile, done) => {
+    try {
+      // Check if user exists
+      let user = db.prepare('SELECT * FROM users WHERE id = ?').get(profile.id);
+      if (!user) {
+        // New user – insert with provider = 'google'
         const stmt = db.prepare(`
-            INSERT OR REPLACE INTO users (id, username, avatar)
-            VALUES (?, ?, ?)
+          INSERT INTO users (id, username, avatar, provider)
+          VALUES (?, ?, ?, 'google')
         `);
-        stmt.run(profile.id, profile.username, profile.avatar);
-        
-        // Manually log the user in via Passport
-        req.login(profile, (err) => {
-            if (err) {
-                console.error('Login error:', err);
-                return res.status(500).send('Login failed');
-            }
-            console.log('🎉 User logged in, redirecting to home');
-            res.redirect('/');
-        });
-    })
-    .catch(err => {
-        console.error('❌ Manual token exchange error:', err);
-        res.status(500).send('Authentication failed: ' + err.message);
-    });
-});
+        stmt.run(profile.id, profile.displayName, profile.photos[0]?.value);
+        user = db.prepare('SELECT * FROM users WHERE id = ?').get(profile.id);
+      } else {
+        // Update avatar in case it changed
+        db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(profile.photos[0]?.value, profile.id);
+      }
+      return done(null, user);
+    } catch (err) {
+      console.error('Google auth error:', err);
+      return done(err);
+    }
+  }
+));
 
 // ----------------------------------------------------------------------
-// 4. Discord login route – redirects to Discord
+// 4. Discord route (simplified placeholder – avoids rate limits)
 // ----------------------------------------------------------------------
 app.get('/auth/discord', (req, res) => {
-    const discordAuthUrl = `https://discord.com/oauth2/authorize?client_id=${process.env.DISCORD_CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(DISCORD_CALLBACK_URL)}&scope=identify%20email%20guilds`;
-    res.redirect(discordAuthUrl);
+    res.send('Discord login is temporarily unavailable due to rate limiting. Please use Google.');
 });
 
 // ----------------------------------------------------------------------
-// 5. Logout
+// 5. Routes
 // ----------------------------------------------------------------------
-app.get('/logout', (req, res) => {
-    req.logout((err) => {
-        if (err) console.error(err);
-        res.redirect('/');
-    });
-});
 
-// ----------------------------------------------------------------------
-// 6. Home page
-// ----------------------------------------------------------------------
+// Home
 app.get('/', (req, res) => {
     if (req.isAuthenticated()) {
         const keys = db.prepare('SELECT * FROM webhook_keys WHERE user_id = ? ORDER BY created_at DESC').all(req.user.id);
@@ -147,9 +98,49 @@ app.get('/', (req, res) => {
     }
 });
 
-// ----------------------------------------------------------------------
-// 7. Webhook key generation (protected)
-// ----------------------------------------------------------------------
+// Google login
+app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
+
+// Google callback
+app.get('/auth/google/callback', 
+    passport.authenticate('google', { failureRedirect: '/' }),
+    (req, res) => {
+        // After login, check if the user has chosen a username yet
+        if (!req.user.chosen_username) {
+            // First-time Google user – redirect to username selection
+            res.redirect('/choose-username');
+        } else {
+            res.redirect('/');
+        }
+    }
+);
+
+// Username selection page
+app.get('/choose-username', ensureAuthenticated, (req, res) => {
+    res.render('choose-username', { user: req.user });
+});
+
+app.post('/choose-username', ensureAuthenticated, (req, res) => {
+    const { username } = req.body;
+    if (!username || username.length < 3) {
+        return res.render('choose-username', { user: req.user, error: 'Username must be at least 3 characters.' });
+    }
+    // Optional: check if username already taken (can add later)
+    db.prepare('UPDATE users SET chosen_username = ? WHERE id = ?').run(username, req.user.id);
+    // Update session user
+    req.user.chosen_username = username;
+    res.redirect('/');
+});
+
+// Logout
+app.get('/logout', (req, res) => {
+    req.logout((err) => {
+        if (err) console.error(err);
+        res.redirect('/');
+    });
+});
+
+// Webhook generation (protected)
 app.post('/generate', ensureAuthenticated, (req, res) => {
     const key = crypto.randomBytes(16).toString('hex');
     const stmt = db.prepare('INSERT INTO webhook_keys (key, user_id) VALUES (?, ?)');
@@ -157,16 +148,13 @@ app.post('/generate', ensureAuthenticated, (req, res) => {
     res.json({ key, webhookUrl: `/webhook/${key}`, viewUrl: `/view/${key}` });
 });
 
-// ----------------------------------------------------------------------
-// 8. Public webhook endpoint
-// ----------------------------------------------------------------------
+// Public webhook endpoint
 app.all('/webhook/:key', (req, res) => {
     const { key } = req.params;
     const keyExists = db.prepare('SELECT key FROM webhook_keys WHERE key = ?').get(key);
     if (!keyExists) {
         return res.status(404).send('Webhook key not found');
     }
-
     const stmt = db.prepare(`
         INSERT INTO webhook_requests (key, method, headers, body)
         VALUES (?, ?, ?, ?)
@@ -177,33 +165,26 @@ app.all('/webhook/:key', (req, res) => {
         JSON.stringify(req.headers),
         req.body.toString('utf8')
     );
-
     res.status(200).send('Webhook received');
 });
 
-// ----------------------------------------------------------------------
-// 9. View key data (protected)
-// ----------------------------------------------------------------------
+// View key data (protected)
 app.get('/view/:key', ensureAuthenticated, (req, res) => {
     const { key } = req.params;
     const keyOwner = db.prepare('SELECT user_id FROM webhook_keys WHERE key = ?').get(key);
     if (!keyOwner || keyOwner.user_id !== req.user.id) {
         return res.status(403).send('Forbidden');
     }
-
     const requests = db.prepare(`
         SELECT method, headers, body, timestamp
         FROM webhook_requests
         WHERE key = ?
         ORDER BY timestamp DESC
     `).all(key);
-
     res.render('view-key', { key, requests, user: req.user });
 });
 
-// ----------------------------------------------------------------------
-// 10. API endpoint (protected)
-// ----------------------------------------------------------------------
+// API endpoint
 app.get('/api/webhook/:key', ensureAuthenticated, (req, res) => {
     const { key } = req.params;
     const keyOwner = db.prepare('SELECT user_id FROM webhook_keys WHERE key = ?').get(key);
@@ -215,7 +196,7 @@ app.get('/api/webhook/:key', ensureAuthenticated, (req, res) => {
 });
 
 // ----------------------------------------------------------------------
-// 11. Authentication middleware
+// 6. Auth middleware
 // ----------------------------------------------------------------------
 function ensureAuthenticated(req, res, next) {
     if (req.isAuthenticated()) return next();
@@ -223,7 +204,7 @@ function ensureAuthenticated(req, res, next) {
 }
 
 // ----------------------------------------------------------------------
-// 12. Test database connection
+// 7. DB test
 // ----------------------------------------------------------------------
 try {
     db.prepare('SELECT 1').get();
@@ -233,9 +214,6 @@ try {
     process.exit(1);
 }
 
-// ----------------------------------------------------------------------
-// 13. Start server
-// ----------------------------------------------------------------------
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
 });
