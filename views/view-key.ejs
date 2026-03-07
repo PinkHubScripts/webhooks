@@ -43,7 +43,7 @@
                     <div class="request-item bg-white rounded-lg shadow p-4" data-index="<%= index %>">
                         <div class="flex justify-between text-sm text-gray-500 mb-2">
                             <span class="method"><%= req.method %></span>
-                            <span class="timestamp"><%= req.timestamp %></span>
+                            <span class="timestamp-local" data-utc="<%= req.timestamp %>"><%= req.timestamp %></span>
                         </div>
                         <details>
                             <summary class="cursor-pointer text-blue-600">Headers</summary>
@@ -70,6 +70,18 @@
 
     <script>
         document.addEventListener('DOMContentLoaded', () => {
+            // Convert all timestamps to local time
+            document.querySelectorAll('.timestamp-local').forEach(el => {
+                const utcDate = el.getAttribute('data-utc');
+                if (utcDate) {
+                    const date = new Date(utcDate);
+                    // Check if valid date
+                    if (!isNaN(date)) {
+                        el.textContent = date.toLocaleString(); // local time with user's locale
+                    }
+                }
+            });
+
             const searchInput = document.getElementById('searchInput');
             const requestItems = document.querySelectorAll('.request-item');
             const totalCountSpan = document.getElementById('totalCount');
@@ -80,7 +92,7 @@
             const requestData = [];
             requestItems.forEach(item => {
                 const method = item.querySelector('.method').textContent;
-                const timestamp = item.querySelector('.timestamp').textContent;
+                const timestamp = item.querySelector('.timestamp-local').textContent; // now local
                 const headers = item.querySelector('.headers').textContent;
                 const body = item.querySelector('.body').textContent;
                 requestData.push({
