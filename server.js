@@ -12,10 +12,11 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ----------------------------------------------------------------------
-// Admin configuration
+// Admin configuration with logging
 // ----------------------------------------------------------------------
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim());
-console.log('👑 Admin emails:', ADMIN_EMAILS);
+console.log('👑 Admin emails from env:', ADMIN_EMAILS);
+console.log('👑 Raw ADMIN_EMAILS env:', process.env.ADMIN_EMAILS);
 
 // ----------------------------------------------------------------------
 // Environment logs
@@ -64,14 +65,15 @@ passport.deserializeUser((id, done) => {
     console.log('Deserializing user:', id);
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
     if (user) {
-        // Add isAdmin flag
+        console.log('Deserialized user email:', user.email);
+        console.log('Admin check:', ADMIN_EMAILS.includes(user.email));
         user.isAdmin = ADMIN_EMAILS.includes(user.email);
     }
     done(null, user);
 });
 
 // ----------------------------------------------------------------------
-// Google Strategy – store email
+// Google Strategy – store email with debug
 // ----------------------------------------------------------------------
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
@@ -82,6 +84,7 @@ passport.use(new GoogleStrategy({
     console.log('✅ Google strategy verify function called');
     console.log('Profile ID:', profile.id);
     console.log('Email:', profile.emails?.[0]?.value);
+    console.log('Full profile:', JSON.stringify(profile, null, 2));
     
     try {
       let user = db.prepare('SELECT * FROM users WHERE id = ?').get(profile.id);
@@ -99,8 +102,10 @@ passport.use(new GoogleStrategy({
         db.prepare('UPDATE users SET avatar = ?, email = ? WHERE id = ?').run(profile.photos[0]?.value, email, profile.id);
         user = db.prepare('SELECT * FROM users WHERE id = ?').get(profile.id);
       }
+      console.log('User after upsert:', user);
       // Add isAdmin flag
       user.isAdmin = ADMIN_EMAILS.includes(user.email);
+      console.log('isAdmin set to:', user.isAdmin);
       return done(null, user);
     } catch (err) {
       console.error('❌ Database error:', err);
@@ -110,20 +115,18 @@ passport.use(new GoogleStrategy({
 ));
 
 // ----------------------------------------------------------------------
-// Middleware: ensure authenticated
+// Middleware
 // ----------------------------------------------------------------------
 function ensureAuthenticated(req, res, next) {
     if (req.isAuthenticated()) return next();
     res.redirect('/');
 }
 
-// ----------------------------------------------------------------------
-// Middleware: ensure admin
-// ----------------------------------------------------------------------
 function ensureAdmin(req, res, next) {
     if (req.isAuthenticated() && req.user.isAdmin) {
         return next();
     }
+    console.log('Admin access denied. User:', req.user);
     res.status(403).send('Forbidden: Admins only');
 }
 
@@ -135,11 +138,11 @@ function ensureAdmin(req, res, next) {
 app.get('/', (req, res) => {
     console.log('Home route, isAuthenticated:', req.isAuthenticated());
     if (req.isAuthenticated()) {
+        // Ensure isAdmin flag is set
+        req.user.isAdmin = ADMIN_EMAILS.includes(req.user.email);
+        console.log('Home route user:', { id: req.user.id, email: req.user.email, isAdmin: req.user.isAdmin });
         const keys = db.prepare('SELECT * FROM webhook_keys WHERE user_id = ? ORDER BY created_at DESC').all(req.user.id);
-        // Add isAdmin flag to user for template
-        const user = req.user;
-        user.isAdmin = ADMIN_EMAILS.includes(user.email);
-        res.render('index', { user, keys });
+        res.render('index', { user: req.user, keys });
     } else {
         res.render('index', { user: null, keys: [] });
     }
@@ -280,9 +283,7 @@ app.post('/delete-key/:key', ensureAuthenticated, (req, res) => {
 
 // Admin dashboard
 app.get('/admin', ensureAdmin, (req, res) => {
-    // Get total webhook keys
     const totalKeys = db.prepare('SELECT COUNT(*) as count FROM webhook_keys').get();
-    // Get all keys with user info
     const keys = db.prepare(`
         SELECT wk.key, wk.created_at, u.username, u.email, u.chosen_username
         FROM webhook_keys wk
@@ -322,6 +323,20 @@ app.post('/admin/proxy', ensureAdmin, express.json(), async (req, res) => {
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
+});
+
+// ----------------------------------------------------------------------
+// Debug route to check your user (remove after fixing)
+// ----------------------------------------------------------------------
+app.get('/debug-me', ensureAuthenticated, (req, res) => {
+    res.json({
+        id: req.user.id,
+        email: req.user.email,
+        username: req.user.username,
+        chosen_username: req.user.chosen_username,
+        isAdmin: req.user.isAdmin,
+        adminList: ADMIN_EMAILS
+    });
 });
 
 // ----------------------------------------------------------------------
