@@ -218,7 +218,7 @@ passport.use(new GitHubStrategy({
 ));
 
 // ----------------------------------------------------------------------
-// Discord Manual OAuth (no Passport)
+// Discord Manual OAuth (with enhanced error logging)
 // ----------------------------------------------------------------------
 const DISCORD_CALLBACK_URL = 'https://webhooks-gwsp.onrender.com/auth/discord/callback';
 const DISCORD_SCOPES = ['identify', 'email', 'guilds'];
@@ -259,12 +259,28 @@ app.get('/auth/discord/callback', async (req, res) => {
             body: params,
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
         });
-        const tokenData = await tokenRes.json();
+
+        // Log response status and headers
         console.log('Token exchange response status:', tokenRes.status);
+        console.log('Token exchange response headers:', tokenRes.headers.get('content-type'));
+
+        const responseText = await tokenRes.text(); // Get raw text
+        console.log('Token exchange raw response (first 500 chars):', responseText.substring(0, 500));
+
         if (!tokenRes.ok) {
-            console.error('Token exchange failed:', tokenData);
-            return res.status(500).send('Token exchange failed: ' + JSON.stringify(tokenData));
+            console.error('Token exchange failed with status', tokenRes.status);
+            return res.status(500).send(`Token exchange failed: ${responseText}`);
         }
+
+        // Try to parse JSON
+        let tokenData;
+        try {
+            tokenData = JSON.parse(responseText);
+        } catch (parseErr) {
+            console.error('Failed to parse token response as JSON:', parseErr);
+            return res.status(500).send('Invalid JSON response from Discord');
+        }
+
         console.log('Token exchange successful, access token received');
 
         // Fetch user profile
@@ -308,7 +324,6 @@ app.get('/auth/discord/callback', async (req, res) => {
             }
             console.log('✅ Discord authentication successful, user:', user.id);
             if (!user.chosen_username) {
-                // Discord users need to choose a username (like Google)
                 res.redirect('/choose-username');
             } else {
                 res.redirect('/');
