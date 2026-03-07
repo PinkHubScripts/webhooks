@@ -2,11 +2,14 @@ require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
 const passport = require('passport');
-const DiscordStrategy = require('passport-discord').Strategy;
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const path = require('path');
-const db = require('./db');
+const db = require('./db'); // SQLite database (kept for now)
+const fetch = require('node-fetch'); // For manual token exchange
+
+const app = express();
+const PORT = process.env.PORT || 3000;
 
 // ----------------------------------------------------------------------
 // 0. Log environment variables (safe, only first few chars)
@@ -18,11 +21,8 @@ console.log('🔍 SESSION_SECRET (first 4 chars):',
     process.env.SESSION_SECRET ? process.env.SESSION_SECRET.substring(0,4) : '❌ MISSING');
 console.log('🔍 NODE_ENV:', process.env.NODE_ENV);
 
-const app = express();
-const PORT = process.env.PORT || 3000;
-
 // ----------------------------------------------------------------------
-// 1. Session configuration
+// 1. Session configuration (MemoryStore warning is safe to ignore for now)
 // ----------------------------------------------------------------------
 app.use(session({
     secret: process.env.SESSION_SECRET,
@@ -38,7 +38,7 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
 // ----------------------------------------------------------------------
-// 2. Passport serialization
+// 2. Passport serialization (we still need this for session handling)
 // ----------------------------------------------------------------------
 passport.serializeUser((user, done) => done(null, user.id));
 passport.deserializeUser((id, done) => {
@@ -47,112 +47,97 @@ passport.deserializeUser((id, done) => {
 });
 
 // ----------------------------------------------------------------------
-// 3. Discord Strategy – using absolute callback URL
+// 3. Manual OAuth callback – NO passport.authenticate here
 // ----------------------------------------------------------------------
 const DISCORD_CALLBACK_URL = 'https://webhooks-gwsp.onrender.com/auth/discord/callback';
 
-passport.use(new DiscordStrategy({
-    clientID: process.env.DISCORD_CLIENT_ID,
-    clientSecret: process.env.DISCORD_CLIENT_SECRET,
-    callbackURL: DISCORD_CALLBACK_URL,
-    scope: ['identify', 'email', 'guilds']
-}, (accessToken, refreshToken, profile, done) => {
-    try {
-        console.log(`✅ Discord login successful for ${profile.username} (${profile.id})`);
-        const stmt = db.prepare(`
-            INSERT OR REPLACE INTO users (id, username, avatar)
-            VALUES (?, ?, ?)
-        `);
-        stmt.run(profile.id, profile.username, profile.avatar);
-        return done(null, profile);
-    } catch (err) {
-        console.error('❌ Database error during user save:', err);
-        return done(err);
-    }
-}));
-
-// ----------------------------------------------------------------------
-// 4. Callback route with logging
-// ----------------------------------------------------------------------
-app.get('/auth/discord/callback', (req, res, next) => {
+app.get('/auth/discord/callback', (req, res) => {
     console.log('📞 Callback reached at', new Date().toISOString());
     console.log('Query params:', req.query);
-    if (req.query.error) {
-        console.error('Discord returned error:', req.query.error);
-        return res.status(400).send('Discord error: ' + req.query.error);
+    
+    const { code, error } = req.query;
+    if (error) {
+        console.error('Discord returned error:', error);
+        return res.status(400).send('Discord error: ' + error);
     }
-    if (!req.query.code) {
+    if (!code) {
         console.error('No code in callback');
         return res.status(400).send('No code provided');
     }
-    console.log('✅ Authorization code received (first 10 chars):', req.query.code.substring(0, 10) + '...');
-    
-    // ------------------------------------------------------------------
-    // OPTIONAL: MANUAL TOKEN EXCHANGE (uncomment if Passport continues to fail)
-    // ------------------------------------------------------------------
-    /*
-    const fetch = require('node-fetch'); // You'll need to install node-fetch
-    const params = new URLSearchParams({
-        client_id: process.env.DISCORD_CLIENT_ID,
-        client_secret: process.env.DISCORD_CLIENT_SECRET,
-        grant_type: 'authorization_code',
-        code: req.query.code,
-        redirect_uri: DISCORD_CALLBACK_URL,
-        scope: 'identify email guilds'
-    });
+    console.log('✅ Authorization code received (first 10 chars):', code.substring(0, 10) + '...');
+
+    // --- Manual token exchange ---
+    const params = new URLSearchParams();
+    params.append('client_id', process.env.DISCORD_CLIENT_ID);
+    params.append('client_secret', process.env.DISCORD_CLIENT_SECRET);
+    params.append('grant_type', 'authorization_code');
+    params.append('code', code);
+    params.append('redirect_uri', DISCORD_CALLBACK_URL);
+    params.append('scope', 'identify email guilds');
 
     fetch('https://discord.com/api/oauth2/token', {
         method: 'POST',
         body: params,
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     })
-    .then(res => res.json())
-    .then(data => {
-        console.log('Token exchange response:', data);
-        if (data.access_token) {
-            // Now fetch user profile using the access token
-            return fetch('https://discord.com/api/users/@me', {
-                headers: { Authorization: `Bearer ${data.access_token}` }
-            });
-        } else {
-            throw new Error('No access token: ' + JSON.stringify(data));
+    .then(response => response.json())
+    .then(tokenData => {
+        console.log('Token exchange response keys:', Object.keys(tokenData));
+        if (!tokenData.access_token) {
+            throw new Error('Failed to get access token: ' + JSON.stringify(tokenData));
         }
+        // Fetch user profile with the access token
+        return fetch('https://discord.com/api/users/@me', {
+            headers: { Authorization: `Bearer ${tokenData.access_token}` }
+        });
     })
-    .then(res => res.json())
+    .then(response => response.json())
     .then(profile => {
-        console.log('User profile:', profile);
-        // Save user to database (similar to above)
+        console.log(`✅ Discord login successful for ${profile.username} (${profile.id})`);
+        // Save user to database
         const stmt = db.prepare(`
             INSERT OR REPLACE INTO users (id, username, avatar)
             VALUES (?, ?, ?)
         `);
         stmt.run(profile.id, profile.username, profile.avatar);
-        // Manually log the user in
+        
+        // Manually log the user in via Passport
         req.login(profile, (err) => {
-            if (err) return next(err);
+            if (err) {
+                console.error('Login error:', err);
+                return res.status(500).send('Login failed');
+            }
+            console.log('🎉 User logged in, redirecting to home');
             res.redirect('/');
         });
     })
     .catch(err => {
-        console.error('Manual token exchange error:', err);
-        res.status(500).send('Authentication failed');
+        console.error('❌ Manual token exchange error:', err);
+        res.status(500).send('Authentication failed: ' + err.message);
     });
-    */
-    // ------------------------------------------------------------------
-    // If using manual, comment out the next() call below
-    // ------------------------------------------------------------------
-    
-    // Continue to passport for now
-    next();
-}, passport.authenticate('discord', { failureRedirect: '/' }), (req, res) => {
-    console.log('🎉 Passport authentication successful, redirecting to home');
-    res.redirect('/');
 });
 
 // ----------------------------------------------------------------------
-// 5. Other routes (home, login, logout, generate, webhook, view, etc.)
+// 4. Discord login route – redirects to Discord
 // ----------------------------------------------------------------------
-// Home page
+app.get('/auth/discord', (req, res) => {
+    const discordAuthUrl = `https://discord.com/oauth2/authorize?client_id=${process.env.DISCORD_CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(DISCORD_CALLBACK_URL)}&scope=identify%20email%20guilds`;
+    res.redirect(discordAuthUrl);
+});
+
+// ----------------------------------------------------------------------
+// 5. Logout
+// ----------------------------------------------------------------------
+app.get('/logout', (req, res) => {
+    req.logout((err) => {
+        if (err) console.error(err);
+        res.redirect('/');
+    });
+});
+
+// ----------------------------------------------------------------------
+// 6. Home page
+// ----------------------------------------------------------------------
 app.get('/', (req, res) => {
     if (req.isAuthenticated()) {
         const keys = db.prepare('SELECT * FROM webhook_keys WHERE user_id = ? ORDER BY created_at DESC').all(req.user.id);
@@ -162,15 +147,9 @@ app.get('/', (req, res) => {
     }
 });
 
-app.get('/auth/discord', passport.authenticate('discord'));
-
-app.get('/logout', (req, res) => {
-    req.logout((err) => {
-        if (err) console.error(err);
-        res.redirect('/');
-    });
-});
-
+// ----------------------------------------------------------------------
+// 7. Webhook key generation (protected)
+// ----------------------------------------------------------------------
 app.post('/generate', ensureAuthenticated, (req, res) => {
     const key = crypto.randomBytes(16).toString('hex');
     const stmt = db.prepare('INSERT INTO webhook_keys (key, user_id) VALUES (?, ?)');
@@ -178,12 +157,16 @@ app.post('/generate', ensureAuthenticated, (req, res) => {
     res.json({ key, webhookUrl: `/webhook/${key}`, viewUrl: `/view/${key}` });
 });
 
+// ----------------------------------------------------------------------
+// 8. Public webhook endpoint
+// ----------------------------------------------------------------------
 app.all('/webhook/:key', (req, res) => {
     const { key } = req.params;
     const keyExists = db.prepare('SELECT key FROM webhook_keys WHERE key = ?').get(key);
     if (!keyExists) {
         return res.status(404).send('Webhook key not found');
     }
+
     const stmt = db.prepare(`
         INSERT INTO webhook_requests (key, method, headers, body)
         VALUES (?, ?, ?, ?)
@@ -194,24 +177,33 @@ app.all('/webhook/:key', (req, res) => {
         JSON.stringify(req.headers),
         req.body.toString('utf8')
     );
+
     res.status(200).send('Webhook received');
 });
 
+// ----------------------------------------------------------------------
+// 9. View key data (protected)
+// ----------------------------------------------------------------------
 app.get('/view/:key', ensureAuthenticated, (req, res) => {
     const { key } = req.params;
     const keyOwner = db.prepare('SELECT user_id FROM webhook_keys WHERE key = ?').get(key);
     if (!keyOwner || keyOwner.user_id !== req.user.id) {
         return res.status(403).send('Forbidden');
     }
+
     const requests = db.prepare(`
         SELECT method, headers, body, timestamp
         FROM webhook_requests
         WHERE key = ?
         ORDER BY timestamp DESC
     `).all(key);
+
     res.render('view-key', { key, requests, user: req.user });
 });
 
+// ----------------------------------------------------------------------
+// 10. API endpoint (protected)
+// ----------------------------------------------------------------------
 app.get('/api/webhook/:key', ensureAuthenticated, (req, res) => {
     const { key } = req.params;
     const keyOwner = db.prepare('SELECT user_id FROM webhook_keys WHERE key = ?').get(key);
@@ -222,13 +214,16 @@ app.get('/api/webhook/:key', ensureAuthenticated, (req, res) => {
     res.json(requests);
 });
 
+// ----------------------------------------------------------------------
+// 11. Authentication middleware
+// ----------------------------------------------------------------------
 function ensureAuthenticated(req, res, next) {
     if (req.isAuthenticated()) return next();
     res.redirect('/');
 }
 
 // ----------------------------------------------------------------------
-// 6. Test database connection
+// 12. Test database connection
 // ----------------------------------------------------------------------
 try {
     db.prepare('SELECT 1').get();
@@ -239,7 +234,7 @@ try {
 }
 
 // ----------------------------------------------------------------------
-// 7. Start server
+// 13. Start server
 // ----------------------------------------------------------------------
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
