@@ -7,6 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-100 min-h-screen">
+    <!-- Navbar: title + user on left, logout on right -->
     <nav class="bg-white shadow px-6 py-4 flex items-center justify-between">
         <div class="flex items-center gap-3">
             <h1 class="text-xl font-bold">🌸 Pink Webhook Generator</h1>
@@ -15,6 +16,9 @@
                     <img src="<%= user.avatar %>" alt="avatar" class="w-8 h-8 rounded-full"
                          onerror="this.src='https://ui-avatars.com/api/?name=<%= user.chosen_username || user.username %>'">
                     <span class="font-medium"><%= user.chosen_username || user.username %></span>
+                    <% if (user.isAdmin) { %>
+                        <a href="/admin" class="ml-4 bg-purple-600 text-white px-3 py-1 rounded text-sm hover:bg-purple-700">Admin</a>
+                    <% } %>
                 </div>
             <% } %>
         </div>
@@ -71,7 +75,7 @@
                 <% } %>
             </div>
         <% } else { %>
-            <!-- Centered sign‑in with both options -->
+            <!-- Centered sign‑in with both options (larger) -->
             <div class="min-h-[70vh] flex items-center justify-center">
                 <div class="bg-white rounded-lg shadow-xl p-16 text-center max-w-2xl">
                     <h2 class="text-4xl font-bold mb-6">🌸 Pink Webhook Generator</h2>
