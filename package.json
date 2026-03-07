@@ -17,7 +17,8 @@
     "passport-discord": "^0.1.4",
     "passport-google-oauth20": "^2.0.0",
     "node-fetch": "^2.7.0",
-    "pg": "^8.11.3"
+    "pg": "^8.11.3",
+    "passport-github2": "^0.1.12"
   },
   "keywords": [],
   "author": "",
