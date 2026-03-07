@@ -43,6 +43,10 @@ passport.use(new DiscordStrategy({
   return done(null, profile);
 }));
 
+passport._strategies.discord._oauth2.on('error', (err) => {
+    console.error('Discord OAuth2 error:', err);
+});
+
 app.use(bodyParser.raw({ type: '*/*' })); // capture raw body for webhooks
 app.set('view engine', 'ejs');
 
