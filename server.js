@@ -140,8 +140,4 @@ app.get('/api/webhook/:key', ensureAuthenticated, (req, res) => {
   res.json(requests);
 });
 
-<<<<<<< HEAD
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-=======
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
->>>>>>> d1c42d0 (test)

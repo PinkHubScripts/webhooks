@@ -1,7 +1,3 @@
 node_modules/
-<<<<<<< HEAD
-webhooks.db
-=======
 .env
 webhooks.db
->>>>>>> d1c42d0 (test)
