@@ -8,11 +8,23 @@
 </head>
 <body class="bg-gray-100 min-h-screen">
     <!-- Navigation bar with title left-aligned -->
-    <nav class="bg-white shadow p-4">
-        <div class="max-w-4xl mx-auto">
-            <h1 class="text-xl font-bold text-left">🌸 Pink Webhook Generator</h1>
-        </div>
-    </nav>
+<nav class="bg-white shadow px-6 py-4 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+        <h1 class="text-xl font-bold">🌸 Pink Webhook Generator</h1>
+        <% if (user) { %>
+            <div class="flex items-center gap-2 ml-6">
+                <img src="https://cdn.discordapp.com/avatars/<%= user.id %>/<%= user.avatar %>.png" 
+                     alt="avatar" 
+                     class="w-8 h-8 rounded-full"
+                     onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'">
+                <span class="font-medium"><%= user.username %></span>
+            </div>
+        <% } %>
+    </div>
+    <% if (user) { %>
+        <a href="/logout" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 text-sm">Logout</a>
+    <% } %>
+</nav>
 
     <main class="max-w-4xl mx-auto p-6">
         <% if (user) { %>
