@@ -34,6 +34,9 @@ passport.use(new DiscordStrategy({
   callbackURL: '/auth/discord/callback',
   scope: ['identify']
 }, (accessToken, refreshToken, profile, done) => {
+  passport._strategies.discord._oauth2.on('error', (err) => {
+    console.error('Discord OAuth2 error:', err);
+});
   // Insert or update user in database
   const stmt = db.prepare(`
     INSERT OR REPLACE INTO users (id, username, avatar)
@@ -42,10 +45,6 @@ passport.use(new DiscordStrategy({
   stmt.run(profile.id, profile.username, profile.avatar);
   return done(null, profile);
 }));
-
-passport._strategies.discord._oauth2.on('error', (err) => {
-    console.error('Discord OAuth2 error:', err);
-});
 
 app.use(bodyParser.raw({ type: '*/*' })); // capture raw body for webhooks
 app.set('view engine', 'ejs');
